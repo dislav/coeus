@@ -1,6 +1,9 @@
 package domain
 
-import "unicode"
+import (
+	"unicode"
+	"unicode/utf8"
+)
 
 // QuestionStatus values — the three lifecycle states.
 const (
@@ -19,9 +22,9 @@ const (
 type Question struct {
 	ID              string
 	Number          int
-	Question        string
-	QuestionNorm    string
-	QuestionHash    string
+	Text            string
+	TextNorm        string
+	TextHash        string
 	MultipleCorrect bool
 	Choices         []string
 	Answers         []string // value-only, shuffle-safe
@@ -39,12 +42,14 @@ type Question struct {
 // Defaults to "letter" when no ids are present.
 func InferChoiceLabeling(ids []string) string {
 	for _, id := range ids {
-		for _, r := range id {
-			if unicode.IsDigit(r) {
-				return ChoiceLabelingNumber
-			}
-			return ChoiceLabelingLetter
+		if id == "" {
+			continue
 		}
+		r, _ := utf8.DecodeRuneInString(id)
+		if unicode.IsDigit(r) {
+			return ChoiceLabelingNumber
+		}
+		return ChoiceLabelingLetter
 	}
 	return ChoiceLabelingLetter
 }

@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS images (
     original            bytea,
     enhanced            bytea,
     mime                text NOT NULL,
-    width               int,
-    height              int,
+    width               int NOT NULL DEFAULT 0,
+    height              int NOT NULL DEFAULT 0,
     verification_report jsonb,
     extraction_error    jsonb,
     created_at          timestamptz NOT NULL DEFAULT now()

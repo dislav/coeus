@@ -84,33 +84,45 @@ func (r *ImageRepo) ListBySession(ctx context.Context, sessionID string) ([]*dom
 }
 
 func (r *ImageRepo) UpdateEnhanced(ctx context.Context, id string, enhanced []byte) error {
-	_, err := r.pool.Exec(ctx, `UPDATE images SET enhanced = $1 WHERE id = $2`, enhanced, id)
+	tag, err := r.pool.Exec(ctx, `UPDATE images SET enhanced = $1 WHERE id = $2`, enhanced, id)
 	if err != nil {
 		return fmt.Errorf("update enhanced: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("update enhanced: %w", domain.ErrNotFound)
 	}
 	return nil
 }
 
 func (r *ImageRepo) UpdateVerificationReport(ctx context.Context, id string, report []byte) error {
-	_, err := r.pool.Exec(ctx, `UPDATE images SET verification_report = $1 WHERE id = $2`, report, id)
+	tag, err := r.pool.Exec(ctx, `UPDATE images SET verification_report = $1 WHERE id = $2`, report, id)
 	if err != nil {
 		return fmt.Errorf("update verification report: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("update verification report: %w", domain.ErrNotFound)
 	}
 	return nil
 }
 
 func (r *ImageRepo) UpdateExtractionError(ctx context.Context, id string, errJSON []byte) error {
-	_, err := r.pool.Exec(ctx, `UPDATE images SET extraction_error = $1 WHERE id = $2`, errJSON, id)
+	tag, err := r.pool.Exec(ctx, `UPDATE images SET extraction_error = $1 WHERE id = $2`, errJSON, id)
 	if err != nil {
 		return fmt.Errorf("update extraction error: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("update extraction error: %w", domain.ErrNotFound)
 	}
 	return nil
 }
 
 func (r *ImageRepo) CleanBytes(ctx context.Context, id string) error {
-	_, err := r.pool.Exec(ctx, `UPDATE images SET original = NULL, enhanced = NULL WHERE id = $1`, id)
+	tag, err := r.pool.Exec(ctx, `UPDATE images SET original = NULL, enhanced = NULL WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("clean image bytes: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("clean image bytes: %w", domain.ErrNotFound)
 	}
 	return nil
 }

@@ -85,13 +85,19 @@ func (r *SessionRepo) ListByUser(ctx context.Context, userID string, limit, offs
 		}
 		sessions = append(sessions, &s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
 	return sessions, nil
 }
 
 func (r *SessionRepo) Close(ctx context.Context, id string) error {
-	_, err := r.pool.Exec(ctx, `UPDATE sessions SET status = 'closed' WHERE id = $1`, id)
+	tag, err := r.pool.Exec(ctx, `UPDATE sessions SET status = 'closed' WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("close session: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("close session: %w", domain.ErrNotFound)
 	}
 	return nil
 }

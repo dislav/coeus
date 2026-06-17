@@ -60,6 +60,17 @@ func TestSessionRepo_ListByUser(t *testing.T) {
 	}
 }
 
+func TestSessionRepo_CloseNotFound(t *testing.T) {
+	pool := setupTestDB(t)
+	sessRepo := NewSessionRepo(pool)
+	ctx := context.Background()
+
+	err := sessRepo.Close(ctx, "00000000-0000-0000-0000-000000000000")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
 func TestSessionRepo_Close(t *testing.T) {
 	pool := setupTestDB(t)
 	userRepo := NewUserRepo(pool)

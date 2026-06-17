@@ -1,0 +1,41 @@
+server:
+  addr: ":8080"
+  read_timeout: 15s
+  write_timeout: 120s
+  shutdown_timeout: 30s
+
+postgres:
+  max_conns: 20
+  min_conns: 4
+
+jwt:
+  access_ttl: 1h
+  refresh_ttl: 168h
+
+ai:
+  kimi:
+    model: "kimi-k2.7"
+    timeout: 90s
+  deepseek:
+    model: "deepseek-v4-pro"
+    timeout: 60s
+  embedder:
+    model: "text-embedding-3-small"
+    dim: 1536
+
+pipeline:
+  extract_max_attempts: 3
+  semantic_threshold: 0.92
+  reaper_interval: 60s
+  stale_threshold: 10m
+  max_queue_attempts: 3
+
+workers:
+  count: 4
+
+upload:
+  max_bytes: 10485760
+  allowed_mimes:
+    - "image/jpeg"
+    - "image/png"
+    - "image/webp"

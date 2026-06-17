@@ -1,6 +1,7 @@
 package config
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"strconv"
@@ -9,6 +10,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+//go:embed config.yaml
+var defaultConfigYAML []byte
 
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
@@ -83,28 +87,20 @@ type UploadConfig struct {
 	AllowedMimes []string `yaml:"allowed_mimes"`
 }
 
-// Load reads config.yaml and applies env overrides.
+// Load reads the embedded config.yaml and applies env overrides.
 // Secrets (DSN, JWT secret, API keys) must come from env.
 func Load() (*Config, error) {
-	data, err := os.ReadFile("internal/config/config.yaml")
-	if err != nil {
-		// Fallback for test binaries executed from the package directory.
-		data, err = os.ReadFile("config.yaml")
-		if err != nil {
-			return nil, fmt.Errorf("read config.yaml: %w", err)
-		}
-	}
-
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config.yaml: %w", err)
+	if err := yaml.Unmarshal(defaultConfigYAML, &cfg); err != nil {
+		return nil, fmt.Errorf("parse embedded config.yaml: %w", err)
 	}
-
-	applyEnvOverrides(&cfg)
+	if err := applyEnvOverrides(&cfg); err != nil {
+		return nil, fmt.Errorf("apply env overrides: %w", err)
+	}
 	return &cfg, nil
 }
 
-func applyEnvOverrides(cfg *Config) {
+func applyEnvOverrides(cfg *Config) error {
 	if v := os.Getenv("COEUS_POSTGRES_DSN"); v != "" {
 		cfg.Postgres.DSN = v
 	}
@@ -133,10 +129,33 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Server.Addr = v
 	}
 	if v := os.Getenv("COEUS_WORKERS_COUNT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.Workers.Count = n
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("invalid COEUS_WORKERS_COUNT %q: %w", v, err)
 		}
+		cfg.Workers.Count = n
 	}
+	return nil
+}
+
+// Validate checks that required secrets and connection strings are configured.
+func (c *Config) Validate() error {
+	if c.Postgres.DSN == "" {
+		return fmt.Errorf("postgres.dsn is required (set COEUS_POSTGRES_DSN)")
+	}
+	if c.JWT.Secret == "" {
+		return fmt.Errorf("jwt.secret is required (set COEUS_JWT_SECRET)")
+	}
+	if c.AI.Kimi.APIKey == "" {
+		return fmt.Errorf("ai.kimi.api_key is required (set COEUS_AI_KIMI_API_KEY)")
+	}
+	if c.AI.DeepSeek.APIKey == "" {
+		return fmt.Errorf("ai.deepseek.api_key is required (set COEUS_AI_DEEPSEEK_API_KEY)")
+	}
+	if c.AI.Embedder.APIKey == "" {
+		return fmt.Errorf("ai.embedder.api_key is required (set COEUS_AI_EMBEDDER_API_KEY)")
+	}
+	return nil
 }
 
 func (c *UploadConfig) AllowedMimesMap() map[string]bool {

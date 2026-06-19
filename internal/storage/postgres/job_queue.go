@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -31,6 +32,7 @@ func (q *JobQueue) Enqueue(ctx context.Context, imageID, sessionID string) (stri
 	if err != nil {
 		return "", fmt.Errorf("enqueue job: %w", err)
 	}
+	// Best-effort NOTIFY; workers also poll, so failure is non-fatal.
 	q.pool.Exec(ctx, "NOTIFY jobs_new")
 	return id, nil
 }
@@ -61,7 +63,7 @@ func (q *JobQueue) Claim(ctx context.Context) (*domain.Job, error) {
 	err = row.Scan(&job.ID, &job.ImageID, &job.SessionID, &job.Status,
 		&job.Attempts, &job.QueuedAt, &job.StartedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // no job available
 		}
 		return nil, fmt.Errorf("claim job: %w", err)
@@ -74,7 +76,8 @@ func (q *JobQueue) Claim(ctx context.Context) (*domain.Job, error) {
 
 func (q *JobQueue) Complete(ctx context.Context, id string) error {
 	_, err := q.pool.Exec(ctx, `
-		UPDATE jobs SET status = 'done', finished_at = now() WHERE id = $1
+		UPDATE jobs SET status = 'done', finished_at = now()
+		WHERE id = $1 AND status = 'processing'
 	`, id)
 	if err != nil {
 		return fmt.Errorf("complete job: %w", err)
@@ -84,7 +87,8 @@ func (q *JobQueue) Complete(ctx context.Context, id string) error {
 
 func (q *JobQueue) Fail(ctx context.Context, id, errMsg string) error {
 	_, err := q.pool.Exec(ctx, `
-		UPDATE jobs SET status = 'failed', finished_at = now(), last_error = $1 WHERE id = $2
+		UPDATE jobs SET status = 'failed', finished_at = now(), last_error = $1
+		WHERE id = $2 AND status = 'processing'
 	`, errMsg, id)
 	if err != nil {
 		return fmt.Errorf("fail job: %w", err)

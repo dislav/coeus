@@ -7,7 +7,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pgxvec "github.com/pgvector/pgvector-go/pgx"
 	"github.com/vlgrigoriev/coeus/internal/config"
 )
 
@@ -19,6 +21,13 @@ func NewPool(ctx context.Context, cfg config.PostgresConfig) (*pgxpool.Pool, err
 	}
 	pcfg.MaxConns = cfg.MaxConns
 	pcfg.MinConns = cfg.MinConns
+
+	pcfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		if err := pgxvec.RegisterTypes(ctx, conn); err != nil {
+			return fmt.Errorf("register pgvector types: %w", err)
+		}
+		return nil
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, pcfg)
 	if err != nil {

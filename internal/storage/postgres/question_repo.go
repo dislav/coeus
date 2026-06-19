@@ -173,7 +173,7 @@ func (r *QuestionRepo) ListForModeration(ctx context.Context, statusFilter, tagF
 		       q.multiple_correct, q.choices, q.answers, q.choice_labeling,
 		       q.confidence, q.explanation,
 		       to_char(q.verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-		       to_char(q.verified_by, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		       q.verified_by::text,
 		       q.status
 		FROM questions q JOIN question_tags qt ON qt.question_id = q.id JOIN tags t ON t.id = qt.tag_id`
 	}
@@ -213,7 +213,13 @@ func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, answers, c
 	choicesJSON, _ := json.Marshal(choices)
 	answersJSON, _ := json.Marshal(answers)
 
-	tag, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin update by expert: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE questions
 		SET answers = $1, choices = $2, explanation = $3, confidence = $4,
 		    status = 'verified', verified_at = now(), verified_by = $5, updated_at = now()
@@ -226,9 +232,17 @@ func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, answers, c
 		return fmt.Errorf("update by expert: %w", domain.ErrNotFound)
 	}
 
-	r.pool.Exec(ctx, `DELETE FROM question_tags WHERE question_id = $1`, id)
+	if _, err := tx.Exec(ctx, `DELETE FROM question_tags WHERE question_id = $1`, id); err != nil {
+		return fmt.Errorf("clear tags: %w", err)
+	}
 	for _, tagName := range tags {
-		r.linkTag(ctx, id, tagName)
+		if err := r.linkTagTx(ctx, tx, id, tagName); err != nil {
+			return fmt.Errorf("link tag %q: %w", tagName, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit update by expert: %w", err)
 	}
 	return nil
 }
@@ -263,6 +277,23 @@ func (r *QuestionRepo) linkTag(ctx context.Context, questionID, tagName string) 
 	return err
 }
 
+func (r *QuestionRepo) linkTagTx(ctx context.Context, tx pgx.Tx, questionID, tagName string) error {
+	var tagID string
+	err := tx.QueryRow(ctx, `
+		INSERT INTO tags (name) VALUES ($1)
+		ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+		RETURNING id
+	`, tagName).Scan(&tagID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO question_tags (question_id, tag_id) VALUES ($1, $2)
+		ON CONFLICT DO NOTHING
+	`, questionID, tagID)
+	return err
+}
+
 func (r *QuestionRepo) getTags(ctx context.Context, questionID string) ([]string, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT t.name FROM question_tags qt
@@ -279,6 +310,9 @@ func (r *QuestionRepo) getTags(ctx context.Context, questionID string) ([]string
 		rows.Scan(&name)
 		tags = append(tags, name)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get tags: %w", err)
+	}
 	return tags, nil
 }
 
@@ -287,7 +321,7 @@ const questionSelectBase = `
 	       q.multiple_correct, q.choices, q.answers, q.choice_labeling,
 	       q.confidence, q.explanation,
 	       to_char(q.verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-	       to_char(q.verified_by, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	       q.verified_by::text,
 	       q.status
 	FROM questions q`
 

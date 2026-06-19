@@ -11,4 +11,4 @@ go.work.sum
 .env
 config.local.yaml
 data/
-coeus
+/coeus

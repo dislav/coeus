@@ -69,27 +69,42 @@ func TestAllowedMimesMap(t *testing.T) {
 }
 
 func TestValidate_MissingSecrets(t *testing.T) {
-	// Do not set any required env secrets.
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
+	t.Run("missing postgres dsn", func(t *testing.T) {
+		t.Setenv("COEUS_JWT_SECRET", "test-secret")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
 
-	err = cfg.Validate()
-	if err == nil {
-		t.Fatal("Validate() expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "postgres.dsn") {
-		t.Errorf("Validate() error = %q, expected to mention postgres.dsn", err.Error())
-	}
+		err = cfg.Validate()
+		if err == nil {
+			t.Fatal("Validate() expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "postgres.dsn") {
+			t.Errorf("Validate() error = %q, expected to mention postgres.dsn", err.Error())
+		}
+	})
+
+	t.Run("missing jwt secret", func(t *testing.T) {
+		t.Setenv("COEUS_POSTGRES_DSN", "postgres://test:test@localhost:5432/coeus?sslmode=disable")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+
+		err = cfg.Validate()
+		if err == nil {
+			t.Fatal("Validate() expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "jwt.secret") {
+			t.Errorf("Validate() error = %q, expected to mention jwt.secret", err.Error())
+		}
+	})
 }
 
 func TestValidate_WithSecrets(t *testing.T) {
 	t.Setenv("COEUS_POSTGRES_DSN", "postgres://test:test@localhost:5432/coeus?sslmode=disable")
 	t.Setenv("COEUS_JWT_SECRET", "test-secret")
-	t.Setenv("COEUS_AI_KIMI_API_KEY", "kimi-key")
-	t.Setenv("COEUS_AI_DEEPSEEK_API_KEY", "ds-key")
-	t.Setenv("COEUS_AI_EMBEDDER_API_KEY", "emb-key")
 
 	cfg, err := Load()
 	if err != nil {

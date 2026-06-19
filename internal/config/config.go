@@ -138,22 +138,14 @@ func applyEnvOverrides(cfg *Config) error {
 	return nil
 }
 
-// Validate checks that required secrets and connection strings are configured.
+// Validate checks that secrets required by the current plan are set.
+// AI API key validation will be added in Plan 2/3 when those services are wired.
 func (c *Config) Validate() error {
 	if c.Postgres.DSN == "" {
 		return fmt.Errorf("postgres.dsn is required (set COEUS_POSTGRES_DSN)")
 	}
 	if c.JWT.Secret == "" {
 		return fmt.Errorf("jwt.secret is required (set COEUS_JWT_SECRET)")
-	}
-	if c.AI.Kimi.APIKey == "" {
-		return fmt.Errorf("ai.kimi.api_key is required (set COEUS_AI_KIMI_API_KEY)")
-	}
-	if c.AI.DeepSeek.APIKey == "" {
-		return fmt.Errorf("ai.deepseek.api_key is required (set COEUS_AI_DEEPSEEK_API_KEY)")
-	}
-	if c.AI.Embedder.APIKey == "" {
-		return fmt.Errorf("ai.embedder.api_key is required (set COEUS_AI_EMBEDDER_API_KEY)")
 	}
 	return nil
 }

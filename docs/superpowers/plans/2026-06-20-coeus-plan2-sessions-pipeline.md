@@ -55,7 +55,10 @@ internal/
 ```go
 package pipeline
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // ImageEnhancer improves image quality before extraction (upscaler, denoiser, etc.).
 // Implementations live in Plan 3 (real AI client); tests use fakes.
@@ -95,6 +98,8 @@ type ExtractedQuestion struct {
 	Choices         []Answer
 	Answers         []Answer
 	MultipleCorrect bool
+	Confidence      float64  `json:"confidence,omitempty"`
+	Tags            []string `json:"tags,omitempty"` // subject tags from Kimi
 }
 
 // ExtractionErrorCode identifies why extraction failed or was partial.
@@ -131,9 +136,11 @@ type VerificationSummary struct {
 	Results []VerifiedQuestion
 }
 
-// VerifyResult wraps the verification summary.
+// VerifyResult wraps the verification summary and the raw _verification JSON
+// returned by the verifier (persisted to images.verification_report).
 type VerifyResult struct {
 	Summary VerificationSummary
+	Report  json.RawMessage `json:"_verification"` // raw JSON for images.verification_report
 }
 ```
 
@@ -297,7 +304,7 @@ type JobQueue interface {
 	Claim(ctx context.Context) (*domain.Job, error)
 	Complete(ctx context.Context, id string) error
 	Fail(ctx context.Context, id, errMsg string) error
-	ReaperReclaim(ctx context.Context, staleThreshold time.Duration) (int, error)
+	ReaperReclaim(ctx context.Context, staleThreshold time.Duration, maxAttempts int) (reclaimed int, failed int, err error)
 	FindByImageID(ctx context.Context, imageID string) (*domain.Job, error)
 }
 ```
@@ -345,6 +352,114 @@ Expected: all tests `PASS`
 ```bash
 git add internal/storage/ports.go internal/storage/postgres/image_repo.go internal/storage/postgres/image_repo_test.go internal/storage/postgres/job_queue.go internal/storage/postgres/job_queue_test.go
 git commit -m "feat(storage): add CountBySession and FindByImageID methods"
+```
+
+### Part C: ReaperReclaim max-attempts guard
+
+The existing `ReaperReclaim` in `job_queue.go` only resets stale jobs to `pending` with no attempt-limit check. Spec §5.1: after `attempts >= max_queue_attempts` (default 3), a stale job is set to `failed`, not reclaimed.
+
+Requires `config.PipelineConfig.MaxQueueAttempts int` (already present from Plan 1, default 3) — passed through by the worker pool (see Task 5).
+
+- [ ] **Step 13: Write the failing test**
+
+Add to `internal/storage/postgres/job_queue_test.go`:
+
+```go
+func TestJobQueue_ReaperReclaimMaxAttempts(t *testing.T) {
+	pool := setupTestDB(t)
+	userRepo := NewUserRepo(pool)
+	sessRepo := NewSessionRepo(pool)
+	imgRepo := NewImageRepo(pool)
+	jq := NewJobQueue(pool)
+	ctx := context.Background()
+
+	user, _ := userRepo.Create(ctx, "reaper-max@example.com", "hash", "user")
+	sess, _ := sessRepo.Create(ctx, user.ID, 3600, 300)
+	imgID, _ := imgRepo.Create(ctx, sess.ID, []byte("raw"), "image/jpeg", 800, 600)
+
+	jobID, _ := jq.Enqueue(ctx, imgID, sess.ID)
+
+	// Manually push the job to processing with attempts=3 and a stale started_at
+	_, err := pool.Exec(ctx, `
+		UPDATE jobs SET status='processing', attempts=3,
+			started_at = now() - interval '1 hour'
+		WHERE id = $1`, jobID)
+	if err != nil {
+		t.Fatalf("seed stale job: %v", err)
+	}
+
+	reclaimed, failed, err := jq.ReaperReclaim(ctx, time.Minute, 3)
+	if err != nil {
+		t.Fatalf("ReaperReclaim: %v", err)
+	}
+	if reclaimed != 0 {
+		t.Errorf("reclaimed = %d, want 0 (attempts exhausted)", reclaimed)
+	}
+	if failed != 1 {
+		t.Errorf("failed = %d, want 1", failed)
+	}
+
+	// Job should now be 'failed'
+	job, _ := jq.FindByImageID(ctx, imgID)
+	if job == nil || job.Status != domain.JobStatusFailed {
+		t.Errorf("job status = %v, want failed", job)
+	}
+}
+```
+
+- [ ] **Step 14: Run test to verify it fails**
+
+Run: `go test ./internal/storage/postgres/ -run TestJobQueue_ReaperReclaimMaxAttempts -v`
+Expected: compile error — `jq.ReaperReclaim` signature mismatch (too few arguments / return values)
+
+- [ ] **Step 15: Update ReaperReclaim signature and implementation**
+
+In `internal/storage/postgres/job_queue.go`, replace the existing `ReaperReclaim` method with:
+
+```go
+// ReaperReclaim reclaims stale processing jobs. Jobs whose attempts have reached
+// maxAttempts are marked failed; the rest are reset to pending for another try.
+func (q *JobQueue) ReaperReclaim(ctx context.Context, staleThreshold time.Duration, maxAttempts int) (reclaimed int, failed int, err error) {
+	threshold := fmt.Sprintf("%f seconds", staleThreshold.Seconds())
+
+	// 1. Fail jobs that have exhausted their attempts
+	tag, err := q.pool.Exec(ctx, `
+		UPDATE jobs SET status='failed', finished_at=now()
+		WHERE status='processing'
+		  AND started_at < now() - $1::interval
+		  AND attempts >= $2`,
+		threshold, maxAttempts)
+	if err != nil {
+		return 0, 0, fmt.Errorf("reaper fail: %w", err)
+	}
+	failed = int(tag.RowsAffected())
+
+	// 2. Reclaim (reset to pending) jobs that still have attempts left
+	tag, err = q.pool.Exec(ctx, `
+		UPDATE jobs SET status='pending', attempts=attempts+1, started_at=NULL
+		WHERE status='processing'
+		  AND started_at < now() - $1::interval
+		  AND attempts < $2`,
+		threshold, maxAttempts)
+	if err != nil {
+		return 0, failed, fmt.Errorf("reaper reclaim: %w", err)
+	}
+	reclaimed = int(tag.RowsAffected())
+
+	return reclaimed, failed, nil
+}
+```
+
+- [ ] **Step 16: Run test to verify it passes**
+
+Run: `go test ./internal/storage/postgres/ -run TestJobQueue_ReaperReclaim -v`
+Expected: both reaper tests `PASS`
+
+- [ ] **Step 17: Commit**
+
+```bash
+git add internal/storage/ports.go internal/storage/postgres/job_queue.go internal/storage/postgres/job_queue_test.go
+git commit -m "fix(storage): add max-queue-attempts guard to reaper"
 ```
 
 ---
@@ -544,9 +659,9 @@ func (p *Pipeline) execute(ctx context.Context, job *domain.Job) error {
 			Answers:         answerTexts(eq.Answers),
 			ChoiceLabeling:  domain.InferChoiceLabeling(answerIDs(eq.Choices)),
 			Status:          domain.QuestionStatusModeration,
-			Embedding:       embedding,
-			Tags:            []string{"ai-generated"},
-		}
+		Embedding:       embedding,
+		Tags:            append([]string{"ai-generated"}, eq.Tags...),
+	}
 		id, err := p.questions.Create(ctx, q)
 		if err != nil {
 			return fmt.Errorf("create question: %w", err)
@@ -575,6 +690,10 @@ func (p *Pipeline) execute(ctx context.Context, job *domain.Job) error {
 					}
 				}
 			}
+			// Persist verification report (raw _verification JSON)
+			if err := p.images.UpdateVerificationReport(ctx, img.ID, vr.Report); err != nil {
+				p.log.Warn("persist verification report", "image", img.ID, "error", err)
+			}
 		}
 	}
 
@@ -585,6 +704,7 @@ func (p *Pipeline) execute(ctx context.Context, job *domain.Job) error {
 // Retries on unreadable_image, no_questions_found, and transport errors.
 // partial_extraction and unknown codes are terminal (no retry).
 func (p *Pipeline) extractWithRetries(ctx context.Context, image []byte, mime string) (ExtractResult, error) {
+	// result is zero-valued here — callers check err before inspecting result fields.
 	var result ExtractResult
 	var lastErr error
 	for attempt := 1; attempt <= p.cfg.ExtractMaxAttempts; attempt++ {
@@ -695,6 +815,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -770,17 +891,19 @@ func (f *fakeEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 // --- Fake repos (full interface implementations) ---
 
 type fakeImageRepo struct {
-	images     map[string]*domain.Image
-	enhanced   map[string][]byte
-	extractErr map[string][]byte
-	nextID     int
+	images              map[string]*domain.Image
+	enhanced            map[string][]byte
+	extractErr          map[string][]byte
+	verificationReports map[string][]byte // imageID -> report bytes
+	nextID              int
 }
 
 func newFakeImageRepo(img *domain.Image) *fakeImageRepo {
 	r := &fakeImageRepo{
-		images:     make(map[string]*domain.Image),
-		enhanced:   make(map[string][]byte),
-		extractErr: make(map[string][]byte),
+		images:              make(map[string]*domain.Image),
+		enhanced:            make(map[string][]byte),
+		extractErr:          make(map[string][]byte),
+		verificationReports: make(map[string][]byte),
 	}
 	if img != nil {
 		r.images[img.ID] = img
@@ -817,7 +940,10 @@ func (r *fakeImageRepo) UpdateEnhanced(_ context.Context, id string, enhanced []
 	}
 	return nil
 }
-func (r *fakeImageRepo) UpdateVerificationReport(context.Context, string, []byte) error { return nil }
+func (r *fakeImageRepo) UpdateVerificationReport(_ context.Context, id string, report []byte) error {
+	r.verificationReports[id] = report
+	return nil
+}
 func (r *fakeImageRepo) UpdateExtractionError(_ context.Context, id string, errJSON []byte) error {
 	r.extractErr[id] = errJSON
 	return nil
@@ -908,7 +1034,9 @@ func (q *fakeJobQueue) Fail(_ context.Context, id, msg string) error {
 	q.failed = append(q.failed, struct{ id, msg string }{id, msg})
 	return nil
 }
-func (q *fakeJobQueue) ReaperReclaim(context.Context, time.Duration) (int, error) { return 0, nil }
+func (q *fakeJobQueue) ReaperReclaim(context.Context, time.Duration, int) (reclaimed int, failed int, err error) {
+	return 0, 0, nil
+}
 func (q *fakeJobQueue) FindByImageID(context.Context, string) (*domain.Job, error) {
 	return nil, nil
 }
@@ -939,12 +1067,15 @@ func job() *domain.Job {
 
 func TestPipeline_HappyPath(t *testing.T) {
 	ext := &fakeExtractor{result: ExtractResult{Questions: sampleQuestions()}}
-	ver := &fakeVerifier{result: VerifyResult{Summary: VerificationSummary{Results: []VerifiedQuestion{
-		{Index: 0, Confidence: 0.95, Explanation: "correct"},
-		{Index: 1, Confidence: 0.90, Explanation: "correct"},
-	}}}}
+	ver := &fakeVerifier{result: VerifyResult{
+		Summary: VerificationSummary{Results: []VerifiedQuestion{
+			{Index: 0, Confidence: 0.95, Explanation: "correct"},
+			{Index: 1, Confidence: 0.90, Explanation: "correct"},
+		}},
+		Report: json.RawMessage(`{"score":0.9}`),
+	}}
 	emb := &fakeEmbedder{embedding: []float32{0.1, 0.2}}
-	p, _, qRepo, jq := testPipeline(&fakeEnhancer{}, ext, ver, emb)
+	p, imgRepo, qRepo, jq := testPipeline(&fakeEnhancer{}, ext, ver, emb)
 
 	err := p.Run(context.Background(), job())
 	if err != nil {
@@ -964,6 +1095,9 @@ func TestPipeline_HappyPath(t *testing.T) {
 	}
 	if !ver.called {
 		t.Error("verifier not called")
+	}
+	if imgRepo.verificationReports["img-1"] == nil {
+		t.Error("verification report should be persisted for img-1")
 	}
 }
 
@@ -1286,13 +1420,16 @@ func (wp *WorkerPool) Stop() {
 }
 
 func (wp *WorkerPool) runReaperOnce(ctx context.Context) {
-	n, err := wp.jobs.ReaperReclaim(ctx, wp.pipelineCfg.StaleThreshold)
+	reclaimed, failed, err := wp.jobs.ReaperReclaim(ctx, wp.pipelineCfg.StaleThreshold, wp.pipelineCfg.MaxQueueAttempts)
 	if err != nil {
 		wp.log.Error("startup reaper", "error", err)
 		return
 	}
-	if n > 0 {
-		wp.log.Info("startup reaper reclaimed stale jobs", "count", n)
+	if reclaimed > 0 {
+		wp.log.Info("startup reaper reclaimed stale jobs", "count", reclaimed)
+	}
+	if failed > 0 {
+		wp.log.Warn("startup reaper failed exhausted jobs", "count", failed)
 	}
 }
 
@@ -1312,13 +1449,16 @@ func (wp *WorkerPool) reaperLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			n, err := wp.jobs.ReaperReclaim(ctx, wp.pipelineCfg.StaleThreshold)
+			reclaimed, failed, err := wp.jobs.ReaperReclaim(ctx, wp.pipelineCfg.StaleThreshold, wp.pipelineCfg.MaxQueueAttempts)
 			if err != nil {
 				wp.log.Error("reaper", "error", err)
 				continue
 			}
-			if n > 0 {
-				wp.log.Info("reaper reclaimed stale jobs", "count", n)
+			if reclaimed > 0 {
+				wp.log.Info("reaper reclaimed stale jobs", "count", reclaimed)
+			}
+			if failed > 0 {
+				wp.log.Warn("reaper failed exhausted jobs", "count", failed)
 			}
 		}
 	}
@@ -1586,13 +1726,16 @@ func TestWorkerPool_IntegrationReaperReclaims(t *testing.T) {
 		t.Fatal("expected to claim a job")
 	}
 
-	// Reaper with 0 threshold reclaims immediately
-	n, err := jq.ReaperReclaim(ctx, 0)
+	// Reaper with 0 threshold reclaims immediately (attempts=1 < maxAttempts)
+	reclaimed, failed, err := jq.ReaperReclaim(ctx, 0, 3)
 	if err != nil {
 		t.Fatalf("reaper: %v", err)
 	}
-	if n != 1 {
-		t.Fatalf("expected 1 reclaimed, got %d", n)
+	if reclaimed != 1 {
+		t.Fatalf("expected 1 reclaimed, got %d", reclaimed)
+	}
+	if failed != 0 {
+		t.Fatalf("expected 0 failed, got %d", failed)
 	}
 
 	// Job should be claimable again
@@ -2162,6 +2305,7 @@ Create `internal/httpapi/handlers/sessions.go`:
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -2243,7 +2387,10 @@ func (h *SessionHandler) Get(c *gin.Context) {
 		return
 	}
 
-	imageCount, _ := h.images.CountBySession(c.Request.Context(), id)
+	imageCount, err := h.images.CountBySession(c.Request.Context(), id)
+	if err != nil {
+		slog.Warn("count images failed, showing 0", "session", id, "error", err)
+	}
 
 	c.JSON(http.StatusOK, dto.SessionDetailResponse{
 		SessionResponse: dto.SessionResponse{
@@ -2381,8 +2528,8 @@ func (q *fakeJobQueueForImages) Enqueue(_ context.Context, imageID, sessionID st
 func (q *fakeJobQueueForImages) Claim(context.Context) (*domain.Job, error) { return nil, nil }
 func (q *fakeJobQueueForImages) Complete(context.Context, string) error     { return nil }
 func (q *fakeJobQueueForImages) Fail(context.Context, string, string) error { return nil }
-func (q *fakeJobQueueForImages) ReaperReclaim(context.Context, time.Duration) (int, error) {
-	return 0, nil
+func (q *fakeJobQueueForImages) ReaperReclaim(context.Context, time.Duration, int) (reclaimed int, failed int, err error) {
+	return 0, 0, nil
 }
 func (q *fakeJobQueueForImages) FindByImageID(_ context.Context, _ string) (*domain.Job, error) {
 	return q.jobByImage, nil
@@ -2426,7 +2573,7 @@ func TestImageHandler_Upload(t *testing.T) {
 
 	pngBytes := validPNG(t)
 	body := &bytes.Buffer{}
-	w := realMultipartWriter(body, pngBytes)
+	w := newMultipartForm(body, pngBytes)
 	req := httptest.NewRequest("POST", "/sessions/sess-1/images", body)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	rr := httptest.NewRecorder()
@@ -2460,7 +2607,7 @@ func TestImageHandler_UploadWrongMime(t *testing.T) {
 
 	// Upload a text file disguised as image
 	body := &bytes.Buffer{}
-	w := realMultipartWriter(body, []byte("this is not an image"))
+	w := newMultipartForm(body, []byte("this is not an image"))
 	req := httptest.NewRequest("POST", "/sessions/sess-1/images", body)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	rr := httptest.NewRecorder()
@@ -2502,9 +2649,15 @@ func TestImageHandler_List(t *testing.T) {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/httpapi/handlers/ -run TestImageHandler -v`
-Expected: compile error — `undefined: ImageHandler, undefined: NewImageHandler, undefined: realMultipartWriter`
+Expected: compile error — `undefined: ImageHandler, undefined: NewImageHandler, undefined: newMultipartForm`
 
-- [ ] **Step 3: Create the images handler**
+- [ ] **Step 3: Install WebP decode dependency**
+
+Run: `go get golang.org/x/image/webp`
+
+This adds `golang.org/x/image/webp` to `go.mod`. The blank import in the handler below registers WebP decoding so `image.DecodeConfig` can read `.webp` uploads.
+
+- [ ] **Step 4: Create the images handler**
 
 Create `internal/httpapi/handlers/images.go`:
 
@@ -2515,11 +2668,13 @@ import (
 	"bytes"
 	"image"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
-	_ "image/jpeg" // register jpeg for DecodeConfig
-	_ "image/png"  // register png for DecodeConfig
+	_ "image/jpeg"             // register jpeg for DecodeConfig
+	_ "image/png"              // register png for DecodeConfig
+	_ "golang.org/x/image/webp" // register webp for DecodeConfig
 
 	"github.com/gin-gonic/gin"
 	"github.com/vlgrigoriev/coeus/internal/config"
@@ -2583,6 +2738,7 @@ func (h *ImageHandler) Upload(c *gin.Context) {
 		return
 	}
 
+	// Enqueue fires NOTIFY jobs_new internally — workers wake without polling.
 	jobID, err := h.jobs.Enqueue(ctx, imgID, session.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errorResponse(err))
@@ -2611,7 +2767,11 @@ func (h *ImageHandler) List(c *gin.Context) {
 	data := make([]dto.ImageResponse, 0, len(images))
 	for _, img := range images {
 		jobStatus := "unknown"
-		if job, _ := h.jobs.FindByImageID(ctx, img.ID); job != nil {
+		job, err := h.jobs.FindByImageID(ctx, img.ID)
+		if err != nil {
+			slog.Warn("find job for image failed", "image", img.ID, "error", err)
+		}
+		if job != nil {
 			jobStatus = job.Status
 		}
 		data = append(data, dto.ImageResponse{
@@ -2628,11 +2788,11 @@ func (h *ImageHandler) List(c *gin.Context) {
 }
 ```
 
-Also add the `realMultipartWriter` helper to the bottom of `internal/httpapi/handlers/images_test.go` and add `"mime/multipart"` to its imports:
+Also add the `newMultipartForm` helper to the bottom of `internal/httpapi/handlers/images_test.go` and add `"mime/multipart"` to its imports:
 
 ```go
-// realMultipartWriter creates a multipart form with an "image" field.
-func realMultipartWriter(buf *bytes.Buffer, data []byte) *multipart.Writer {
+// newMultipartForm creates a multipart form with an "image" field.
+func newMultipartForm(buf *bytes.Buffer, data []byte) *multipart.Writer {
 	w := multipart.NewWriter(buf)
 	fw, _ := w.CreateFormFile("image", "test.png")
 	fw.Write(data)
@@ -2643,15 +2803,15 @@ func realMultipartWriter(buf *bytes.Buffer, data []byte) *multipart.Writer {
 
 And update the test file imports to include `"mime/multipart"`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Run test to verify it passes**
 
 Run: `go test ./internal/httpapi/handlers/ -run TestImageHandler -v`
 Expected: all 3 tests `PASS`
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add internal/httpapi/handlers/images.go internal/httpapi/handlers/images_test.go
+git add internal/httpapi/handlers/images.go internal/httpapi/handlers/images_test.go go.mod go.sum
 git commit -m "feat(httpapi): add image upload and list handlers"
 ```
 

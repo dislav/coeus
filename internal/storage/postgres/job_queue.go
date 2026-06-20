@@ -97,6 +97,10 @@ func (q *JobQueue) Fail(ctx context.Context, id, errMsg string) error {
 }
 
 func (q *JobQueue) ReaperReclaim(ctx context.Context, staleThreshold time.Duration, maxAttempts int) (reclaimed int, failed int, err error) {
+	if maxAttempts < 1 {
+		return 0, 0, fmt.Errorf("reaper: maxAttempts must be >= 1")
+	}
+
 	threshold := fmt.Sprintf("%f seconds", staleThreshold.Seconds())
 
 	// 1. Fail jobs that have exhausted their attempts
@@ -113,7 +117,7 @@ func (q *JobQueue) ReaperReclaim(ctx context.Context, staleThreshold time.Durati
 
 	// 2. Reclaim (reset to pending) jobs that still have attempts left
 	tag, err = q.pool.Exec(ctx, `
-		UPDATE jobs SET status='pending', attempts=attempts+1, started_at=NULL
+		UPDATE jobs SET status='pending', started_at=NULL
 		WHERE status='processing'
 		  AND started_at < now() - $1::interval
 		  AND attempts < $2`,

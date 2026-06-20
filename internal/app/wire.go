@@ -8,6 +8,7 @@ import (
 	"github.com/vlgrigoriev/coeus/internal/auth"
 	"github.com/vlgrigoriev/coeus/internal/config"
 	"github.com/vlgrigoriev/coeus/internal/httpapi"
+	"github.com/vlgrigoriev/coeus/internal/pipeline"
 	"github.com/vlgrigoriev/coeus/internal/storage/postgres"
 )
 
@@ -21,6 +22,7 @@ type App struct {
 	JobQueue     *postgres.JobQueue
 	JWTMgr       *auth.JWTManager
 	Server       *httpapi.Server
+	WorkerPool   *pipeline.WorkerPool // TODO(plan-3): constructed once AI clients exist
 }
 
 func Build(ctx context.Context, cfg *config.Config) (*App, error) {
@@ -45,6 +47,16 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		userRepo, sessionRepo, imageRepo, jobQueue,
 		jwtMgr, pool, cfg.Upload,
 	)
+
+	// TODO(plan-3): construct Pipeline + WorkerPool + spawn workers.
+	// Real ImageEnhancer / AIExtractor / AIVerifier / AIEmbedder implementations
+	// are deferred to Plan 3 — until then, uploaded images stay in 'pending'.
+	//
+	// pip := pipeline.NewPipeline(imageRepo, questionRepo, jobQueue,
+	//     enhancer, extractor, verifier, embedder, cfg.Pipeline, log)
+	// wp := pipeline.NewWorkerPool(jobQueue, pip, cfg.Workers, cfg.Pipeline, cfg.Postgres.DSN, log)
+	// wp.Start(ctx)
+	// app.WorkerPool = wp
 
 	return &App{
 		Config: cfg, Pool: pool,

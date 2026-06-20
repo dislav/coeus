@@ -6,23 +6,40 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/vlgrigoriev/coeus/internal/auth"
+	"github.com/vlgrigoriev/coeus/internal/config"
 	"github.com/vlgrigoriev/coeus/internal/httpapi/handlers"
 	"github.com/vlgrigoriev/coeus/internal/storage"
 )
 
 type Server struct {
-	router   *gin.Engine
-	userRepo storage.UserRepo
-	jwtMgr   *auth.JWTManager
-	pool     *pgxpool.Pool
+	router      *gin.Engine
+	userRepo    storage.UserRepo
+	sessionRepo storage.SessionRepo
+	imageRepo   storage.ImageRepo
+	jobQueue    storage.JobQueue
+	jwtMgr      *auth.JWTManager
+	pool        *pgxpool.Pool
+	uploadCfg   config.UploadConfig
 }
 
-func NewServer(userRepo storage.UserRepo, jwtMgr *auth.JWTManager, pool *pgxpool.Pool) *Server {
+func NewServer(
+	userRepo storage.UserRepo,
+	sessionRepo storage.SessionRepo,
+	imageRepo storage.ImageRepo,
+	jobQueue storage.JobQueue,
+	jwtMgr *auth.JWTManager,
+	pool *pgxpool.Pool,
+	uploadCfg config.UploadConfig,
+) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(Recover(), RequestLog())
 
-	s := &Server{router: r, userRepo: userRepo, jwtMgr: jwtMgr, pool: pool}
+	s := &Server{
+		router: r, userRepo: userRepo, sessionRepo: sessionRepo,
+		imageRepo: imageRepo, jobQueue: jobQueue, jwtMgr: jwtMgr,
+		pool: pool, uploadCfg: uploadCfg,
+	}
 	s.registerRoutes()
 	return s
 }
@@ -43,8 +60,25 @@ func (s *Server) registerRoutes() {
 		authGroup.POST("/refresh", AuthMiddleware(s.jwtMgr), authHandler.Refresh)
 	}
 
-	// Plan 2 will add: sessions, images
-	// Plan 3 will add: questions, expert moderation
+	// Sessions + Images (auth required)
+	sessionHandler := handlers.NewSessionHandler(s.sessionRepo, s.imageRepo)
+	imageHandler := handlers.NewImageHandler(s.imageRepo, s.jobQueue, s.uploadCfg)
+
+	apiGroup := r.Group("/api/v1")
+	apiGroup.Use(AuthMiddleware(s.jwtMgr))
+	{
+		sessions := apiGroup.Group("/sessions")
+		{
+			sessions.POST("", sessionHandler.Create)
+			sessions.GET("", sessionHandler.List)
+			sessions.GET("/:id", sessionHandler.Get)
+			sessions.POST("/:id/close", sessionHandler.Close)
+
+			// Image routes — SessionWindow guards ownership + expiry
+			sessions.POST("/:id/images", SessionWindow(s.sessionRepo), imageHandler.Upload)
+			sessions.GET("/:id/images", SessionWindow(s.sessionRepo), imageHandler.List)
+		}
+	}
 }
 
 func (s *Server) readyz(c *gin.Context) {

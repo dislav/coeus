@@ -12,11 +12,15 @@ import (
 )
 
 type App struct {
-	Config   *config.Config
-	Pool     *pgxpool.Pool
-	UserRepo *postgres.UserRepo
-	JWTMgr   *auth.JWTManager
-	Server   *httpapi.Server
+	Config       *config.Config
+	Pool         *pgxpool.Pool
+	UserRepo     *postgres.UserRepo
+	SessionRepo  *postgres.SessionRepo
+	ImageRepo    *postgres.ImageRepo
+	QuestionRepo *postgres.QuestionRepo
+	JobQueue     *postgres.JobQueue
+	JWTMgr       *auth.JWTManager
+	Server       *httpapi.Server
 }
 
 func Build(ctx context.Context, cfg *config.Config) (*App, error) {
@@ -31,12 +35,22 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	}
 
 	userRepo := postgres.NewUserRepo(pool)
+	sessionRepo := postgres.NewSessionRepo(pool)
+	imageRepo := postgres.NewImageRepo(pool)
+	questionRepo := postgres.NewQuestionRepo(pool)
+	jobQueue := postgres.NewJobQueue(pool)
 	jwtMgr := auth.NewJWTManager(cfg.JWT)
-	server := httpapi.NewServer(userRepo, jwtMgr, pool)
+
+	server := httpapi.NewServer(
+		userRepo, sessionRepo, imageRepo, jobQueue,
+		jwtMgr, pool, cfg.Upload,
+	)
 
 	return &App{
-		Config: cfg, Pool: pool, UserRepo: userRepo,
-		JWTMgr: jwtMgr, Server: server,
+		Config: cfg, Pool: pool,
+		UserRepo: userRepo, SessionRepo: sessionRepo,
+		ImageRepo: imageRepo, QuestionRepo: questionRepo,
+		JobQueue: jobQueue, JWTMgr: jwtMgr, Server: server,
 	}, nil
 }
 

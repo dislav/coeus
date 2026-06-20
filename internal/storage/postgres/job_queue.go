@@ -97,16 +97,33 @@ func (q *JobQueue) Fail(ctx context.Context, id, errMsg string) error {
 }
 
 func (q *JobQueue) ReaperReclaim(ctx context.Context, staleThreshold time.Duration, maxAttempts int) (reclaimed int, failed int, err error) {
+	threshold := fmt.Sprintf("%f seconds", staleThreshold.Seconds())
+
+	// 1. Fail jobs that have exhausted their attempts
 	tag, err := q.pool.Exec(ctx, `
-		UPDATE jobs
-		SET status = 'pending', started_at = NULL
-		WHERE status = 'processing'
+		UPDATE jobs SET status='failed', finished_at=now()
+		WHERE status='processing'
 		  AND started_at < now() - $1::interval
-	`, staleThreshold.String())
+		  AND attempts >= $2`,
+		threshold, maxAttempts)
 	if err != nil {
-		return 0, 0, fmt.Errorf("reaper reclaim: %w", err)
+		return 0, 0, fmt.Errorf("reaper fail: %w", err)
 	}
-	return int(tag.RowsAffected()), 0, nil
+	failed = int(tag.RowsAffected())
+
+	// 2. Reclaim (reset to pending) jobs that still have attempts left
+	tag, err = q.pool.Exec(ctx, `
+		UPDATE jobs SET status='pending', attempts=attempts+1, started_at=NULL
+		WHERE status='processing'
+		  AND started_at < now() - $1::interval
+		  AND attempts < $2`,
+		threshold, maxAttempts)
+	if err != nil {
+		return 0, failed, fmt.Errorf("reaper reclaim: %w", err)
+	}
+	reclaimed = int(tag.RowsAffected())
+
+	return reclaimed, failed, nil
 }
 
 func (q *JobQueue) FindByImageID(ctx context.Context, imageID string) (*domain.Job, error) {

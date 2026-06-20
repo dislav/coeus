@@ -154,3 +154,44 @@ func TestJobQueue_FindByImageID(t *testing.T) {
 		t.Error("expected nil for non-existent image")
 	}
 }
+
+func TestJobQueue_ReaperReclaimMaxAttempts(t *testing.T) {
+	pool := setupTestDB(t)
+	userRepo := NewUserRepo(pool)
+	sessRepo := NewSessionRepo(pool)
+	imgRepo := NewImageRepo(pool)
+	jq := NewJobQueue(pool)
+	ctx := context.Background()
+
+	user, _ := userRepo.Create(ctx, "reaper-max@example.com", "hash", "user")
+	sess, _ := sessRepo.Create(ctx, user.ID, 3600, 300)
+	imgID, _ := imgRepo.Create(ctx, sess.ID, []byte("raw"), "image/jpeg", 800, 600)
+
+	jobID, _ := jq.Enqueue(ctx, imgID, sess.ID)
+
+	// Manually push the job to processing with attempts=3 and a stale started_at
+	_, err := pool.Exec(ctx, `
+		UPDATE jobs SET status='processing', attempts=3,
+			started_at = now() - interval '1 hour'
+		WHERE id = $1`, jobID)
+	if err != nil {
+		t.Fatalf("seed stale job: %v", err)
+	}
+
+	reclaimed, failed, err := jq.ReaperReclaim(ctx, time.Minute, 3)
+	if err != nil {
+		t.Fatalf("ReaperReclaim: %v", err)
+	}
+	if reclaimed != 0 {
+		t.Errorf("reclaimed = %d, want 0 (attempts exhausted)", reclaimed)
+	}
+	if failed != 1 {
+		t.Errorf("failed = %d, want 1", failed)
+	}
+
+	// Job should now be 'failed'
+	job, _ := jq.FindByImageID(ctx, imgID)
+	if job == nil || job.Status != domain.JobStatusFailed {
+		t.Errorf("job status = %v, want failed", job)
+	}
+}

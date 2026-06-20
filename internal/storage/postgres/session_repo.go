@@ -24,7 +24,7 @@ var _ storage.SessionRepo = (*SessionRepo)(nil)
 func (r *SessionRepo) Create(ctx context.Context, userID string, durationSec, bufferSec int) (*domain.Session, error) {
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO sessions (user_id, duration_seconds, buffer_seconds, expires_at)
-		VALUES ($1, $2, $3, now() + make_interval(secs => $2 + $3))
+		VALUES ($1, $2, $3, now() + make_interval(secs => $2::int + $3::int))
 		RETURNING id, user_id, duration_seconds, buffer_seconds,
 		          to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		          to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),

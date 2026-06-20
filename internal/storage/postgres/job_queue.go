@@ -96,7 +96,7 @@ func (q *JobQueue) Fail(ctx context.Context, id, errMsg string) error {
 	return nil
 }
 
-func (q *JobQueue) ReaperReclaim(ctx context.Context, staleThreshold time.Duration) (int, error) {
+func (q *JobQueue) ReaperReclaim(ctx context.Context, staleThreshold time.Duration, maxAttempts int) (reclaimed int, failed int, err error) {
 	tag, err := q.pool.Exec(ctx, `
 		UPDATE jobs
 		SET status = 'pending', started_at = NULL
@@ -104,7 +104,29 @@ func (q *JobQueue) ReaperReclaim(ctx context.Context, staleThreshold time.Durati
 		  AND started_at < now() - $1::interval
 	`, staleThreshold.String())
 	if err != nil {
-		return 0, fmt.Errorf("reaper reclaim: %w", err)
+		return 0, 0, fmt.Errorf("reaper reclaim: %w", err)
 	}
-	return int(tag.RowsAffected()), nil
+	return int(tag.RowsAffected()), 0, nil
+}
+
+func (q *JobQueue) FindByImageID(ctx context.Context, imageID string) (*domain.Job, error) {
+	row := q.pool.QueryRow(ctx, `
+		SELECT id, image_id, session_id, status, attempts,
+		       COALESCE(last_error, ''),
+		       to_char(queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		       COALESCE(to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), ''),
+		       COALESCE(to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '')
+		FROM jobs WHERE image_id = $1 ORDER BY queued_at DESC LIMIT 1
+	`, imageID)
+
+	var job domain.Job
+	err := row.Scan(&job.ID, &job.ImageID, &job.SessionID, &job.Status,
+		&job.Attempts, &job.LastError, &job.QueuedAt, &job.StartedAt, &job.FinishedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find job by image: %w", err)
+	}
+	return &job, nil
 }

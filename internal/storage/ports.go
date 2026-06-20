@@ -49,6 +49,7 @@ type ImageRepo interface {
 	UpdateVerificationReport(ctx context.Context, id string, report []byte) error
 	UpdateExtractionError(ctx context.Context, id string, errJSON []byte) error
 	CleanBytes(ctx context.Context, id string) error
+	CountBySession(ctx context.Context, sessionID string) (int, error)
 }
 
 // QuestionRepo manages the canonical question knowledge base.
@@ -71,5 +72,6 @@ type JobQueue interface {
 	Claim(ctx context.Context) (*domain.Job, error)
 	Complete(ctx context.Context, id string) error
 	Fail(ctx context.Context, id, errMsg string) error
-	ReaperReclaim(ctx context.Context, staleThreshold time.Duration) (int, error)
+	ReaperReclaim(ctx context.Context, staleThreshold time.Duration, maxAttempts int) (reclaimed int, failed int, err error)
+	FindByImageID(ctx context.Context, imageID string) (*domain.Job, error)
 }

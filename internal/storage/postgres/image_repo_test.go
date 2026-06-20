@@ -79,3 +79,26 @@ func TestImageRepo_CleanBytes(t *testing.T) {
 		t.Error("metadata should remain after cleanup")
 	}
 }
+
+func TestImageRepo_CountBySession(t *testing.T) {
+	pool := setupTestDB(t)
+	userRepo := NewUserRepo(pool)
+	sessRepo := NewSessionRepo(pool)
+	imgRepo := NewImageRepo(pool)
+	ctx := context.Background()
+
+	user, _ := userRepo.Create(ctx, "count@example.com", "hash", "user")
+	sess, _ := sessRepo.Create(ctx, user.ID, 3600, 300)
+
+	imgRepo.Create(ctx, sess.ID, []byte("a"), "image/jpeg", 1, 1)
+	imgRepo.Create(ctx, sess.ID, []byte("b"), "image/jpeg", 1, 1)
+	imgRepo.Create(ctx, sess.ID, []byte("c"), "image/jpeg", 1, 1)
+
+	count, err := imgRepo.CountBySession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("CountBySession: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("count = %d, want 3", count)
+	}
+}

@@ -126,3 +126,14 @@ func (r *ImageRepo) CleanBytes(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (r *ImageRepo) CountBySession(ctx context.Context, sessionID string) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx,
+		`SELECT count(*) FROM images WHERE session_id = $1`, sessionID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count images by session: %w", err)
+	}
+	return count, nil
+}

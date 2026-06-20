@@ -106,7 +106,7 @@ func TestJobQueue_ReaperReclaim(t *testing.T) {
 	jq.Enqueue(ctx, imgID, sess.ID)
 	jq.Claim(ctx) // mark as processing
 
-	reclaimed, err := jq.ReaperReclaim(ctx, 0*time.Second)
+	reclaimed, _, err := jq.ReaperReclaim(ctx, 0*time.Second, 5)
 	if err != nil {
 		t.Fatalf("ReaperReclaim: %v", err)
 	}
@@ -117,5 +117,40 @@ func TestJobQueue_ReaperReclaim(t *testing.T) {
 	job, err := jq.Claim(ctx)
 	if err != nil || job == nil {
 		t.Fatal("expected job after reclaim")
+	}
+}
+
+func TestJobQueue_FindByImageID(t *testing.T) {
+	pool := setupTestDB(t)
+	userRepo := NewUserRepo(pool)
+	sessRepo := NewSessionRepo(pool)
+	imgRepo := NewImageRepo(pool)
+	jq := NewJobQueue(pool)
+	ctx := context.Background()
+
+	user, _ := userRepo.Create(ctx, "findjb@example.com", "hash", "user")
+	sess, _ := sessRepo.Create(ctx, user.ID, 3600, 300)
+	imgID, _ := imgRepo.Create(ctx, sess.ID, []byte("raw"), "image/jpeg", 800, 600)
+
+	jobID, _ := jq.Enqueue(ctx, imgID, sess.ID)
+
+	job, err := jq.FindByImageID(ctx, imgID)
+	if err != nil {
+		t.Fatalf("FindByImageID: %v", err)
+	}
+	if job == nil || job.ID != jobID {
+		t.Fatalf("expected job %s, got %v", jobID, job)
+	}
+	if job.Status != domain.JobStatusPending {
+		t.Errorf("status = %q, want pending", job.Status)
+	}
+
+	// Not found returns nil, nil
+	job2, err := jq.FindByImageID(ctx, "00000000-0000-0000-0000-000000000000")
+	if err != nil {
+		t.Fatalf("FindByImageID miss: %v", err)
+	}
+	if job2 != nil {
+		t.Error("expected nil for non-existent image")
 	}
 }

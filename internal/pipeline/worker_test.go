@@ -50,13 +50,13 @@ func TestWorkerPool_StartAndStop(t *testing.T) {
 
 // --- Integration tests (Testcontainers) ---
 
-func setupPipelineTestDB(t *testing.T) (*pgxpool.Pool, string) {
+func setupPipelineTestDB(t *testing.T, parentCtx context.Context) (*pgxpool.Pool, string) {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	ctx := context.Background()
+	ctx := parentCtx
 	container, err := tcpg.Run(ctx,
 		"pgvector/pgvector:pg16",
 		tcpg.WithDatabase("coeus_test"),
@@ -93,18 +93,28 @@ func setupPipelineTestDB(t *testing.T) (*pgxpool.Pool, string) {
 }
 
 func TestWorkerPool_IntegrationProcessesJob(t *testing.T) {
-	pool, dsn := setupPipelineTestDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool, dsn := setupPipelineTestDB(t, ctx)
 
-	ctx := context.Background()
 	userRepo := pgstore.NewUserRepo(pool)
 	sessRepo := pgstore.NewSessionRepo(pool)
 	imgRepo := pgstore.NewImageRepo(pool)
 	qRepo := pgstore.NewQuestionRepo(pool)
 	jq := pgstore.NewJobQueue(pool)
 
-	user, _ := userRepo.Create(ctx, "worker@example.com", "hash", "user")
-	sess, _ := sessRepo.Create(ctx, user.ID, 3600, 300)
-	imgID, _ := imgRepo.Create(ctx, sess.ID, []byte("raw"), "image/jpeg", 100, 100)
+	user, err := userRepo.Create(ctx, "worker@example.com", "hash", "user")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	sess, err := sessRepo.Create(ctx, user.ID, 3600, 300)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	imgID, err := imgRepo.Create(ctx, sess.ID, []byte("raw"), "image/jpeg", 100, 100)
+	if err != nil {
+		t.Fatalf("create image: %v", err)
+	}
 
 	// Pipeline with fakes that always succeed
 	pipeline := NewPipeline(imgRepo, qRepo, jq,
@@ -116,14 +126,14 @@ func TestWorkerPool_IntegrationProcessesJob(t *testing.T) {
 			{Index: 0, Confidence: 0.9, Explanation: "ok"},
 		}}}},
 		&fakeEmbedder{embedding: make([]float32, 1536)},
-		config.PipelineConfig{ExtractMaxAttempts: 3, SemanticThreshold: 0.92,
+		config.PipelineConfig{ExtractMaxAttempts: 3, MaxQueueAttempts: 3, SemanticThreshold: 0.92,
 			ReaperInterval: 2 * time.Second, StaleThreshold: time.Minute},
 		quietLogger(),
 	)
 
 	wp := NewWorkerPool(jq, pipeline,
 		config.WorkersConfig{Count: 2},
-		config.PipelineConfig{ReaperInterval: 2 * time.Second, StaleThreshold: time.Minute},
+		config.PipelineConfig{ExtractMaxAttempts: 3, MaxQueueAttempts: 3, ReaperInterval: 2 * time.Second, StaleThreshold: time.Minute},
 		dsn, quietLogger())
 
 	wpCtx, cancel := context.WithCancel(context.Background())
@@ -140,36 +150,58 @@ func TestWorkerPool_IntegrationProcessesJob(t *testing.T) {
 	}
 
 	// Poll for job completion (max 10s)
+	var lastErr error
+	var job *domain.Job
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		job, _ := jq.FindByImageID(ctx, imgID)
+		job, lastErr = jq.FindByImageID(ctx, imgID)
+		if lastErr != nil {
+			t.Logf("FindByImageID poll error (non-fatal): %v", lastErr)
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
 		if job != nil && job.Status == domain.JobStatusDone {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	job, _ := jq.FindByImageID(ctx, imgID)
+	job, err = jq.FindByImageID(ctx, imgID)
+	if err != nil {
+		t.Fatalf("final FindByImageID: %v", err)
+	}
 	if job == nil || job.Status != domain.JobStatusDone {
 		t.Fatalf("job %s did not complete, status=%v", jobID, job)
 	}
 }
 
-func TestWorkerPool_IntegrationReaperReclaims(t *testing.T) {
-	pool, _ := setupPipelineTestDB(t)
+func TestJobQueue_ReaperReclaimIntegration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool, _ := setupPipelineTestDB(t, ctx)
 
-	ctx := context.Background()
 	userRepo := pgstore.NewUserRepo(pool)
 	sessRepo := pgstore.NewSessionRepo(pool)
 	imgRepo := pgstore.NewImageRepo(pool)
 	jq := pgstore.NewJobQueue(pool)
 
-	user, _ := userRepo.Create(ctx, "reaper2@example.com", "hash", "user")
-	sess, _ := sessRepo.Create(ctx, user.ID, 3600, 300)
-	imgID, _ := imgRepo.Create(ctx, sess.ID, []byte("raw"), "image/jpeg", 100, 100)
+	user, err := userRepo.Create(ctx, "reaper2@example.com", "hash", "user")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	sess, err := sessRepo.Create(ctx, user.ID, 3600, 300)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	imgID, err := imgRepo.Create(ctx, sess.ID, []byte("raw"), "image/jpeg", 100, 100)
+	if err != nil {
+		t.Fatalf("create image: %v", err)
+	}
 
 	// Enqueue and manually claim (marks as processing with stale_threshold=0)
-	jq.Enqueue(ctx, imgID, sess.ID)
+	if _, err := jq.Enqueue(ctx, imgID, sess.ID); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
 	claimed, _ := jq.Claim(ctx)
 	if claimed == nil {
 		t.Fatal("expected to claim a job")

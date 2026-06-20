@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/vlgrigoriev/coeus/internal/auth"
 	"github.com/vlgrigoriev/coeus/internal/domain"
+	"github.com/vlgrigoriev/coeus/internal/storage"
 )
 
 func AuthMiddleware(jwtMgr *auth.JWTManager) gin.HandlerFunc {
@@ -88,4 +89,39 @@ func apiError(err error) gin.H {
 		return gin.H{"error": gin.H{"code": de.Code, "message": de.Message}}
 	}
 	return gin.H{"error": gin.H{"code": "internal", "message": "internal server error"}}
+}
+
+// SessionWindow guards upload/list paths behind session ownership + open status + expiry.
+// It expects AuthMiddleware to have set "user_id" in the gin context.
+// Not-found and wrong-owner both return 404 to avoid leaking session existence.
+func SessionWindow(sessions storage.SessionRepo) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+		sessionID := c.Param("id")
+
+		sess, err := sessions.FindByID(c.Request.Context(), sessionID)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusNotFound, apiError(domain.ErrNotFound))
+			return
+		}
+
+		if sess.UserID != userID {
+			c.AbortWithStatusJSON(http.StatusNotFound, apiError(domain.ErrNotFound))
+			return
+		}
+
+		if sess.Status != domain.SessionStatusOpen {
+			c.AbortWithStatusJSON(http.StatusGone, apiError(domain.ErrSessionExpired))
+			return
+		}
+
+		expiresAt, err := time.Parse(time.RFC3339, sess.ExpiresAt)
+		if err != nil || time.Now().After(expiresAt) {
+			c.AbortWithStatusJSON(http.StatusGone, apiError(domain.ErrSessionExpired))
+			return
+		}
+
+		c.Set("session", sess)
+		c.Next()
+	}
 }

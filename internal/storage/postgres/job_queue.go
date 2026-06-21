@@ -151,3 +151,32 @@ func (q *JobQueue) FindByImageID(ctx context.Context, imageID string) (*domain.J
 	}
 	return &job, nil
 }
+
+// FindJobStatusesBySession returns imageID → status for the newest job of each
+// image in the session. DISTINCT ON (image_id) ... ORDER BY image_id, queued_at
+// DESC makes the result deterministic even if an image was re-enqueued.
+func (q *JobQueue) FindJobStatusesBySession(ctx context.Context, sessionID string) (map[string]string, error) {
+	rows, err := q.pool.Query(ctx, `
+		SELECT DISTINCT ON (image_id) image_id, status
+		FROM jobs
+		WHERE session_id = $1
+		ORDER BY image_id, queued_at DESC
+	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("find job statuses by session: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]string)
+	for rows.Next() {
+		var imageID, status string
+		if err := rows.Scan(&imageID, &status); err != nil {
+			return nil, fmt.Errorf("scan job status: %w", err)
+		}
+		out[imageID] = status
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("job status rows: %w", err)
+	}
+	return out, nil
+}

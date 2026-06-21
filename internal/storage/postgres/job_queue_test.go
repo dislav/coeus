@@ -195,3 +195,47 @@ func TestJobQueue_ReaperReclaimMaxAttempts(t *testing.T) {
 		t.Errorf("job status = %v, want failed", job)
 	}
 }
+
+func TestJobQueue_FindJobStatusesBySession(t *testing.T) {
+	pool := setupTestDB(t)
+	userRepo := NewUserRepo(pool)
+	sessRepo := NewSessionRepo(pool)
+	imgRepo := NewImageRepo(pool)
+	jq := NewJobQueue(pool)
+	ctx := context.Background()
+
+	user, _ := userRepo.Create(ctx, "statuses@example.com", "hash", "user")
+	sess, _ := sessRepo.Create(ctx, user.ID, 3600, 300)
+	sess2, _ := sessRepo.Create(ctx, user.ID, 3600, 300)
+
+	imgA, _ := imgRepo.Create(ctx, sess.ID, []byte("a"), "image/jpeg", 1, 1)
+	imgB, _ := imgRepo.Create(ctx, sess.ID, []byte("b"), "image/jpeg", 1, 1)
+	imgOther, _ := imgRepo.Create(ctx, sess2.ID, []byte("c"), "image/jpeg", 1, 1)
+
+	jq.Enqueue(ctx, imgA, sess.ID)
+	jq.Enqueue(ctx, imgB, sess.ID)
+	jq.Enqueue(ctx, imgOther, sess2.ID)
+
+	// Mark imgA's job as done via Claim+Complete.
+	claimed, _ := jq.Claim(ctx)
+	if claimed != nil {
+		jq.Complete(ctx, claimed.ID)
+	}
+
+	statuses, err := jq.FindJobStatusesBySession(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("FindJobStatusesBySession: %v", err)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("len = %d, want 2 (only sess.ID's images)", len(statuses))
+	}
+	if statuses[imgA] != domain.JobStatusDone {
+		t.Errorf("imgA status = %q, want done", statuses[imgA])
+	}
+	if statuses[imgB] != domain.JobStatusPending {
+		t.Errorf("imgB status = %q, want pending", statuses[imgB])
+	}
+	if _, present := statuses[imgOther]; present {
+		t.Errorf("imgOther (different session) leaked into map")
+	}
+}

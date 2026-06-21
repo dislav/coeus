@@ -74,4 +74,5 @@ type JobQueue interface {
 	Fail(ctx context.Context, id, errMsg string) error
 	ReaperReclaim(ctx context.Context, staleThreshold time.Duration, maxAttempts int) (reclaimed int, failed int, err error)
 	FindByImageID(ctx context.Context, imageID string) (*domain.Job, error)
+	FindJobStatusesBySession(ctx context.Context, sessionID string) (map[string]string, error)
 }

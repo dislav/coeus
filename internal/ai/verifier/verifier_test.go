@@ -58,10 +58,12 @@ func testCfg(baseURL string) config.ReviewerConfig {
 
 func sampleInput() []pipeline.ExtractedQuestion {
 	return []pipeline.ExtractedQuestion{
-		{Number: 1, Text: "What is 2+2?", Choices: []pipeline.Answer{{"A", "3"}, {"B", "4"}},
-			Answers: []pipeline.Answer{{"B", "4"}}, Confidence: 0.95, Tags: []string{"math"}},
-		{Number: 2, Text: "Capital of France?", Choices: []pipeline.Answer{{"A", "London"}, {"B", "Paris"}},
-			Answers: []pipeline.Answer{{"B", "Paris"}}, Confidence: 0.90, Tags: []string{"geography"}},
+		{Number: 1, Text: "What is 2+2?",
+			Choices: []pipeline.Answer{{ID: "A", Text: "3"}, {ID: "B", Text: "4"}},
+			Answers: []pipeline.Answer{{ID: "B", Text: "4"}}, Confidence: 0.95, Tags: []string{"math"}},
+		{Number: 2, Text: "Capital of France?",
+			Choices: []pipeline.Answer{{ID: "A", Text: "London"}, {ID: "B", Text: "Paris"}},
+			Answers: []pipeline.Answer{{ID: "B", Text: "Paris"}}, Confidence: 0.90, Tags: []string{"geography"}},
 	}
 }
 

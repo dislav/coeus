@@ -182,6 +182,7 @@ best-effort (pipeline logs a warning and continues).
 - `wire.go` construction of all clients + `Pipeline` + `WorkerPool`.
 - `main.go` calls `WorkerPool.Start`; `App.Close()` stops workers before DB.
 - N+1 fix: `JobQueue.FindJobStatusesBySession` + handler rewrite.
+- Subject tags populated during extraction (medicine, math, etc.) — see §7.2.
 - Unit tests for every client using `httptest.NewServer` + fixture JSON (no live
   API calls). Config tests for renamed env vars and validation.
 
@@ -191,7 +192,6 @@ best-effort (pipeline logs a warning and continues).
 |------|-------------|
 | `CleanBytes` (delete image bytes after all questions verified) | Future moderation plan |
 | Expert moderation endpoints (e.g. `PATCH /questions/:id`) | Future moderation plan |
-| AI-assigned tags during extraction (`Tags` field exists, stays empty) | Future plan |
 | Tightening `ResponseFormat` from `JSONObject` → `JSONSchema` | After confirming against real APIs |
 | Rate limiting / circuit breakers on AI calls | Future plan |
 | Live/contract tests against real APIs | Manual smoke test only (documented) |
@@ -398,10 +398,10 @@ Add to `go.mod`:
 | Module | Purpose |
 |---|---|
 | `github.com/openai/openai-go` | Official SDK — `Chat.Completions.New()`, `Embeddings.New()`, response formats, `option.With*` |
-| `github.com/disintegration/imaging` | Enhancer — `Sharpen`, `AdjustContrast`, `Gamma`, decode/encode for JPEG/PNG |
+| `github.com/davidbyttow/govips/v2` | Enhancer — CGO binding to libvips (`AutoRotate`, `Linear1`, `Gamma`, `Sharpen`, JPEG/PNG/WebP decode+encode) |
 | `github.com/invopop/jsonschema` | Generate JSON Schema from Go structs — fed into the prompt now, into `ResponseFormatJSONSchema` later |
 
-Run `go get github.com/openai/openai-go github.com/disintegration/imaging github.com/invopop/jsonschema` then `go mod tidy`.
+Run `go get github.com/openai/openai-go github.com/davidbyttow/govips/v2 github.com/invopop/jsonschema` then `go mod tidy`.
 
 **Why official `openai/openai-go` and not `sashabaranov/go-openai`:** the
 sashabaranov client is stale (lacks current structured-output and embeddings
@@ -409,13 +409,19 @@ APIs). The official SDK is maintained, supports `option.WithBaseURL` for
 OpenAI-compatible providers (Kimi/DeepSeek), and is the path forward for
 `ResponseFormatJSONSchema`.
 
-> **Note on WebP:** `disintegration/imaging` decodes JPEG/PNG natively. WebP
-> input requires `golang.org/x/image/webp`, which is already imported for decode
-> registration in `internal/httpapi/handlers/images.go:13`. The enhancer must
-> also blank-import `golang.org/x/image/webp` (and `vp8l` is not needed) so
-> `imaging.Decode` can read WebP. Re-encode WebP output via
-> `golang.org/x/image/webp` encoder if the source MIME is `image/webp`;
-> otherwise encode to the source MIME.
+**Why `davidbyttow/govips/v2` and not `disintegration/imaging`:** `imaging` has
+not been updated in 6–7 years. govips is actively maintained, wraps libvips
+(a high-performance image processing library), and handles JPEG/PNG/WebP decode
+and encode natively — no separate WebP decoder/encoder needed.
+
+> **System dependency — libvips (CGO required):** govips is a CGO binding to
+> libvips, which must be installed on the system. Install before building:
+> - **macOS:** `brew install vips pkg-config`
+> - **Linux:** `apt install libvips-dev`
+>
+> CGO must be enabled (`CGO_ENABLED=1`, which is the default for native builds).
+> govips handles WebP natively via libvips — no `golang.org/x/image/webp`
+> blank-import is needed in the enhancer.
 
 ---
 
@@ -423,7 +429,7 @@ OpenAI-compatible providers (Kimi/DeepSeek), and is the path forward for
 
 ### 7.1 Enhancer (`internal/ai/enhancer/`)
 
-Deterministic Go image processing. **No AI call.**
+Deterministic Go image processing via govips (libvips). **No AI call.**
 
 #### Constructor & method
 
@@ -432,19 +438,91 @@ func New(log *slog.Logger) *Enhancer
 func (e *Enhancer) Enhance(ctx context.Context, original []byte, mime string) ([]byte, error)
 ```
 
+#### Lifecycle (libvips init/shutdown)
+
+govips requires a one-time `vips.Startup(nil)` before any image operation,
+and `vips.Shutdown()` at exit. This is wired in §8.1 (Build) and §8.3 (Close),
+not inside the enhancer — the enhancer assumes libvips is already initialized.
+
 #### Behavior
 
-1. Decode `original` with `imaging.Decode(bytes.NewReader(original), imaging.AutoOrientation(true))`. Honors `ctx` via the decode (decode is CPU-bound and fast; `ctx.Err()` is checked before decoding).
-2. Apply, in order:
-   - `imaging.AdjustContrast(img, +15)` — +15% contrast.
-   - `imaging.Gamma(img, 1.15)` — slight brightening of midtones (gamma > 1.0 brightens in `disintegration/imaging`).
-   - `imaging.Sharpen(img, 0.5)` — mild sharpen.
-3. Encode back to the **same MIME** the caller passed:
-   - `image/jpeg` → `imaging.JPEG(buf, img, 92)`
-   - `image/png` → `imaging.PNG(buf, img)`
-   - `image/webp` → encode via `golang.org/x/image/webp` encoder (quality 80)
+The govips API is imperative/mutating on `*vips.ImageRef`. Implementation:
+
+```go
+package enhancer
+
+import (
+    "bytes"
+    "context"
+    "fmt"
+    "log/slog"
+
+    "github.com/davidbyttow/govips/v2/vips"
+)
+
+func New(log *slog.Logger) *Enhancer {
+    return &Enhancer{log: log}
+}
+
+func (e *Enhancer) Enhance(ctx context.Context, original []byte, mime string) ([]byte, error) {
+    if err := ctx.Err(); err != nil {
+        return nil, fmt.Errorf("enhance: %w", err)
+    }
+
+    img, err := vips.NewImageFromBuffer(original)
+    if err != nil {
+        return nil, fmt.Errorf("enhance: decode: %w", err)
+    }
+    defer img.Close()
+
+    if err := img.AutoRotate(); err != nil {
+        return nil, fmt.Errorf("enhance: auto-rotate: %w", err)
+    }
+
+    // +15% contrast (Linear1: out = a*in + b, pivoting around mid-gray 128)
+    // 1.15 * (in - 128) + 128 = 1.15*in - 19.2
+    if err := img.Linear1(1.15, -19.2); err != nil {
+        return nil, fmt.Errorf("enhance: contrast: %w", err)
+    }
+
+    // Gamma 1.15 brightens midtones (govips: out = in^(1/exponent), so >1.0 brightens)
+    if err := img.Gamma(1.15); err != nil {
+        return nil, fmt.Errorf("enhance: gamma: %w", err)
+    }
+
+    // Mild sharpen for text edge crispness (sigma=0.5, x1=1.0, m2=2.0)
+    if err := img.Sharpen(0.5, 1.0, 2.0); err != nil {
+        return nil, fmt.Errorf("enhance: sharpen: %w", err)
+    }
+
+    // Encode back to the same MIME type
+    switch mime {
+    case "image/jpeg":
+        buf, _, err := img.ExportJpeg(&vips.JpegExportParams{Quality: 92})
+        return buf, err
+    case "image/png":
+        buf, _, err := img.ExportPng(&vips.PngExportParams{Compression: 6})
+        return buf, err
+    case "image/webp":
+        buf, _, err := img.ExportWebp(&vips.WebpExportParams{Quality: 92})
+        return buf, err
+    default:
+        return nil, fmt.Errorf("enhance: unsupported MIME %q", mime)
+    }
+}
+```
+
+Operations applied, in order:
+1. `AutoRotate()` — honor EXIF orientation (govips reads EXIF via libvips).
+2. `Linear1(1.15, -19.2)` — +15% contrast, pivoting around mid-gray 128.
+3. `Gamma(1.15)` — brightens midtones (govips `out = in^(1/exponent)`, so >1.0 brightens).
+4. `Sharpen(0.5, 1.0, 2.0)` — mild sharpen for text edge crispness.
+5. Encode to the **same MIME** the caller passed:
+   - `image/jpeg` → `ExportJpeg` (quality 92)
+   - `image/png` → `ExportPng` (compression 6)
+   - `image/webp` → `ExportWebp` (quality 92)
    - any other MIME → return `(nil, error)` (pipeline falls back to original).
-4. Return encoded bytes.
+6. Return encoded bytes.
 
 #### Error handling & fallback
 
@@ -459,19 +537,20 @@ guard at `pipeline.go:97`).
 
 #### Tests (`enhancer_test.go`)
 
-Pure Go, no `httptest`. Cases:
+CGO/libvips required; no `httptest`. govips handles decode/encode internally.
+Cases:
 
 | Case | Assertion |
 |---|---|
 | JPEG round-trip | no error; decoded dimensions preserved; output bytes differ from input; output decodes as JPEG |
 | PNG round-trip | same, decodes as PNG |
-| WebP round-trip | same, decodes as WebP |
+| WebP round-trip | same, decodes as WebP (govips handles natively) |
 | Invalid bytes | error (e.g. `[]byte("not an image")`) |
 | Unsupported MIME (`"application/pdf"`) | error |
 
-Use `image/png` + `image.NewRGBA` to synthesize a small input image (pattern
-already used in `images_test.go:86 validPNG`). Verify dimensions with
-`image.DecodeConfig`.
+Synthesize a small input image (PNG via `image/png` + `image.NewRGBA`, then
+encode to the target MIME with govips, or use a small fixture file). Verify
+dimensions with `vips.NewImageFromBuffer` + `img.Width()`/`img.Height()`.
 
 ---
 
@@ -522,31 +601,69 @@ intent. The wire-level requirement is a message part of type `image_url` whose
 
 #### 7.2.2 Prompt (`prompt.go`)
 
-System prompt (store as a `const`):
+The system prompt is based on the `extract-questions-from-image` skill
+(`skills/extract-questions-from-image/SKILL.md`), which defines the base JSON
+contract the model must produce. We **extend** the skill format with one
+additional field: `tags` (subject classifiers like "math", "chemistry") — this
+field is not in the skill's required-keys list but is needed for the pipeline's
+tagging workflow (§3.1). Store the prompt as a `const`:
 
-> You are an exam-image OCR and parsing engine. You receive a photo of a quiz or
-> test worksheet. Extract every visible question into the JSON object described
-> below. Output ONLY a JSON object — no prose, no markdown fences.
->
-> Each question has:
-> - `number` (int) — the question number as printed (1-based). Use 0 if unnumbered.
-> - `text` (string) — the full question text, verbatim.
-> - `choices` (array of `{id, text}`) — every answer option. `id` is the printed
->   label ("A", "B", "1", "2", "i", "ii", …); `text` is the option text.
-> - `answers` (array of `{id, text}`) — the CORRECT answers only, each with its
->   label and text.
-> - `multiple_correct` (bool) — true if more than one answer is correct.
-> - `confidence` (float 0.0–1.0) — your confidence this question was parsed
->   correctly.
-> - `tags` (array of strings) — subject tags (may be empty).
->
-> If you cannot process the image, set `error` instead of `questions`:
-> - `{"code":"unreadable_image","detail":"…"}` — image too blurry, dark, or corrupt.
-> - `{"code":"no_questions_found","detail":"…"}` — image readable but contains no questions.
-> - `{"code":"partial_extraction","detail":"…"}` — some questions parsed, some not (still include the ones you got in `questions`).
->
-> Never invent answers. If the correct answer is not visible, leave `answers`
-> empty and lower `confidence`.
+```
+You are an exam-image OCR and parsing engine. Analyze the image and extract
+every visible question as structured JSON.
+
+Output a single JSON object with this exact format:
+{
+  "questions": [
+    {
+      "number": <int>,
+      "question": "<full question text>",
+      "multiple_correct": <bool>,
+      "choices": ["<choice text without label prefix>", ...],
+      "answers": [{"id": "<bare label>", "value": "<choice text>"}],
+      "confidence": <0.0-1.0>,
+      "explanation": "<brief reasoning for the answer>",
+      "tags": ["<subject tag>", ...]
+    }
+  ]
+}
+
+Rules:
+- Strip label prefixes from choices: store "Paris" not "A) Paris".
+- Answer IDs are bare labels: "A", "B", "1", "2" (no punctuation — no ")", no ".").
+- answers[].value must match a choice string exactly (without label prefix).
+- Tags are subject classifiers: "math", "chemistry", "history", "medicine", etc.
+  Populate at least one tag per question when the subject is identifiable.
+- Confidence scoring:
+    0.95-1.0: very clear, little doubt
+    0.80-0.94: minor ambiguity (small/blurry text)
+    0.50-0.79: significant inference needed (rotated, partial)
+    0.0-0.49: unreliable / guess
+- Image orientation: mentally rotate the image to the correct orientation before
+  reading. Do not mention rotation unless it caused partial extraction failure.
+- Never invent answers. If the correct answer is not visible, leave "answers": []
+  and lower confidence.
+
+Error handling — if the image cannot be fully parsed, return:
+{
+  "error": {
+    "code": "unreadable_image" | "partial_extraction" | "no_questions_found",
+    "message": "<human-readable description>",
+    "details": "<which questions were affected, if applicable>",
+    "questions_extracted": <N>,
+    "questions_expected": <M>
+  },
+  "questions": [<any questions that were successfully extracted>]
+}
+
+Error codes:
+- unreadable_image: the entire image is unreadable (blurry, blank, corrupt).
+- partial_extraction: some questions extracted, some not (include the extracted
+  ones in "questions" and list the missing ones in "details").
+- no_questions_found: the image is readable but contains no questions.
+
+[Reference: skills/extract-questions-from-image/SKILL.md for the full specification]
+```
 
 User prompt (text part): a short instruction plus the rendered JSON schema for
 reference:
@@ -560,59 +677,76 @@ requiring `ResponseFormatJSONSchema`.
 
 #### 7.2.3 Schema & DTOs (`schema.go`)
 
-**Key design point:** the `pipeline.ExtractedQuestion` / `pipeline.Answer` /
-`pipeline.ExtractionError` types do **not** carry lowercase `json` tags (only
-`Confidence` and `Tags` do). Reusing them directly as the wire format would
-force the model to emit capitalized field names (`"Number"`, `"Text"`, …),
-which models will not do reliably. Therefore the extractor package defines its
-own JSON-tagged DTOs, generates the schema from them, and maps them to the
-pipeline types. This keeps the pipeline contract clean and the wire format
-predictable.
+**Key design point:** the DTOs match the `extract-questions-from-image` skill's
+wire format exactly. The skill returns `choices` as plain strings (labels
+stripped) and `answers` as `{id, value}` pairs — this is the format models
+produce most reliably and what the skill's examples demonstrate.
+
+The pipeline's `ExtractedQuestion.Choices` is `[]Answer` (each with `ID` +
+`Text`). The extractor must therefore synthesize choice IDs from the answer
+labeling pattern detected from the answers array.
 
 ```go
 package extractor
 
-type choiceDTO struct {
-    ID   string `json:"id"`
-    Text string `json:"text"`
+type answerDTO struct {
+    ID    string `json:"id"`
+    Value string `json:"value"`
 }
 
 type questionDTO struct {
     Number          int         `json:"number"`
-    Text            string      `json:"text"`
-    Choices         []choiceDTO `json:"choices"`
-    Answers         []choiceDTO `json:"answers"`
+    Question        string      `json:"question"` // NOT "text"
     MultipleCorrect bool        `json:"multiple_correct"`
+    Choices         []string    `json:"choices"` // plain strings, no labels
+    Answers         []answerDTO `json:"answers"`
     Confidence      float64     `json:"confidence"`
-    Tags            []string    `json:"tags,omitempty"`
+    Explanation     string      `json:"explanation"`
+    Tags            []string    `json:"tags,omitempty"` // subject tags (medicine, math, etc.)
 }
 
 type extractionErrorDTO struct {
-    Code   string `json:"code"`
-    Detail string `json:"detail"`
+    Code               string `json:"code"`
+    Message            string `json:"message"`
+    Details            string `json:"details,omitempty"`
+    QuestionsExtracted int    `json:"questions_extracted,omitempty"`
+    QuestionsExpected  int    `json:"questions_expected,omitempty"`
 }
 
 type extractionResponse struct {
-    Questions []questionDTO        `json:"questions,omitempty"`
-    Error     *extractionErrorDTO  `json:"error,omitempty"`
+    Questions []questionDTO       `json:"questions,omitempty"`
+    Error     *extractionErrorDTO `json:"error,omitempty"`
 }
 ```
 
-Mapping to pipeline types:
+Mapping to pipeline types — the key challenge: the skill returns `choices` as
+plain strings and `answers` as `{id, value}`. The pipeline's
+`ExtractedQuestion.Choices` is `[]Answer` (with ID + Text). The extractor:
+
+1. Detects the labeling pattern from answer IDs (letters → "letter",
+   numbers → "number").
+2. Assigns sequential IDs to choices based on that pattern.
+3. Maps answer `{id, value}` to pipeline `Answer{ID, Text}`.
+4. Maps the skill's `"message"` to the pipeline's `ExtractionError.Detail`
+   (the pipeline field is named `Detail` but the skill field is `Message`).
 
 ```go
 func toPipeline(r extractionResponse) pipeline.ExtractResult {
     res := pipeline.ExtractResult{}
     if r.Error != nil {
-        res.Error = &pipeline.ExtractionError{Code: r.Error.Code, Detail: r.Error.Detail}
+        res.Error = &pipeline.ExtractionError{
+            Code:   r.Error.Code,
+            Detail: r.Error.Message, // skill "message" → pipeline "Detail"
+        }
     }
     res.Questions = make([]pipeline.ExtractedQuestion, len(r.Questions))
     for i, q := range r.Questions {
+        labeling := detectChoiceLabeling(q.Answers)
         res.Questions[i] = pipeline.ExtractedQuestion{
             Number:          q.Number,
-            Text:            q.Text,
-            Choices:         toAnswers(q.Choices),
-            Answers:         toAnswers(q.Answers),
+            Text:            q.Question, // skill "question" → pipeline "Text"
+            Choices:         assignChoiceIDs(q.Choices, labeling),
+            Answers:         mapAnswers(q.Answers),
             MultipleCorrect: q.MultipleCorrect,
             Confidence:      q.Confidence,
             Tags:            q.Tags,
@@ -621,14 +755,67 @@ func toPipeline(r extractionResponse) pipeline.ExtractResult {
     return res
 }
 
-func toAnswers(cs []choiceDTO) []pipeline.Answer {
-    out := make([]pipeline.Answer, len(cs))
-    for i, c := range cs {
-        out[i] = pipeline.Answer{ID: c.ID, Text: c.Text}
+// detectChoiceLabeling inspects answer IDs to determine if choices are labeled
+// with letters (A, B, C…) or numbers (1, 2, 3…). Defaults to "letter".
+func detectChoiceLabeling(answers []answerDTO) string {
+    if len(answers) == 0 {
+        return "letter"
+    }
+    id := answers[0].ID
+    if len(id) > 0 && id[0] >= '0' && id[0] <= '9' {
+        return "number"
+    }
+    return "letter"
+}
+
+// assignChoiceIDs creates Answer objects with sequential IDs based on the
+// labeling pattern: A,B,C… for "letter", 1,2,3… for "number".
+func assignChoiceIDs(choices []string, labeling string) []pipeline.Answer {
+    out := make([]pipeline.Answer, len(choices))
+    for i, text := range choices {
+        out[i] = pipeline.Answer{
+            ID:   labelFor(i, labeling),
+            Text: text,
+        }
     }
     return out
 }
+
+// mapAnswers converts skill {id, value} pairs to pipeline {ID, Text}.
+func mapAnswers(answers []answerDTO) []pipeline.Answer {
+    out := make([]pipeline.Answer, len(answers))
+    for i, a := range answers {
+        out[i] = pipeline.Answer{ID: a.ID, Text: a.Value}
+    }
+    return out
+}
+
+// labelFor returns the i-th label in the given pattern.
+// labelFor(0, "letter") = "A", labelFor(1, "letter") = "B", ...
+// labelFor(0, "number") = "1", labelFor(1, "number") = "2", ...
+// Note: for >26 letter-labeled choices (extremely rare on exams), this wraps
+// to non-letter characters. Acceptable for MVP — real exams rarely exceed ~10 choices.
+func labelFor(i int, labeling string) string {
+    switch labeling {
+    case "number":
+        return strconv.Itoa(i + 1)
+    default:
+        return string(rune('A' + i))
+    }
+}
 ```
+
+**Note on the `Explanation` field:** the skill returns `explanation` per
+question, but the pipeline's `ExtractedQuestion` has no `Explanation` field
+(only `VerifiedQuestion` does). The explanation is therefore not carried into
+the pipeline type — it is consumed by the extractor's DTO for schema generation
+and prompt fidelity, but not persisted at extraction time. The verifier (§7.3)
+re-derives its own `explanation` field from the model output.
+
+**Tags:** the `Tags` field IS populated (in scope per §3.1). The pipeline always
+appends `"ai-generated"` to the tags when persisting questions (see
+`pipeline.go`), so the extractor only needs to return subject tags like
+`"medicine"`, `"math"`, `"chemistry"`.
 
 JSON Schema (for the prompt) is generated once via
 `jsonschema.Reflector{DoNotReference: true}.Reflect(extractionResponse{})`.
@@ -666,10 +853,10 @@ then writes a canned JSON completion. Pass `server.URL` as `VisionConfig.BaseURL
 
 | Case | Server returns | Assert |
 |---|---|---|
-| Happy path | completion with `questions:[{number:1,text:"…",choices:[…],answers:[…],multiple_correct:false,confidence:0.9}]` | `result.Questions` length 1; fields mapped to `pipeline.ExtractedQuestion`; nil Go error; nil `result.Error` |
-| Unreadable image | `{"error":{"code":"unreadable_image","detail":"blurry"}}` | nil Go error; `result.Error.Code == "unreadable_image"` |
+| Happy path | completion with `questions:[{number:1,question:"…",multiple_correct:false,choices:["Paris","London"],answers:[{id:"A",value:"Paris"}],confidence:0.9,explanation:"…",tags:["geography"]}]` | `result.Questions` length 1; `Text` from `question`; `Choices` have synthesized IDs (A,B…) + text; `Answers` mapped `{ID,Text}`; `Tags` present; nil Go error; nil `result.Error` |
+| Unreadable image | `{"error":{"code":"unreadable_image","message":"blurry"}}` | nil Go error; `result.Error.Code == "unreadable_image"`; `result.Error.Detail == "blurry"` (mapped from `message`) |
 | No questions | `{"error":{"code":"no_questions_found",...}}` | nil Go error; `result.Error.Code == "no_questions_found"` |
-| Partial extraction | `{"questions":[...], "error":{"code":"partial_extraction",...}}` | nil Go error; questions present; `result.Error.Code == "partial_extraction"` |
+| Partial extraction | `{"questions":[...], "error":{"code":"partial_extraction","questions_extracted":1,"questions_expected":3,...}}` | nil Go error; questions present; `result.Error.Code == "partial_extraction"` |
 | Transport error (HTTP 500) | 500 | non-nil Go error; zero-value result |
 | Malformed JSON (prose-wrapped) | completion whose content is ```` ```json\n{bad}\n``` ```` then real JSON — or pure prose | after cleanup the real-JSON variant parses; pure-prose variant returns transport error |
 | Timeout | server sleeps beyond `Timeout` (use a tiny `VisionConfig.Timeout`) | non-nil Go error; request honors ctx |
@@ -704,66 +891,193 @@ Call `client.Chat.Completions.New(ctx, ...)` with:
 - **ResponseFormat:** `openai.ResponseFormatJSONObject{}`.
 
 The user-message JSON is a serialization of the input questions for the model
-to read. Reuse `questionDTO`-shaped tags (define a local marshaler or a small
-struct) so the field names are consistent with the extraction vocabulary.
+to read, using the `verificationInput` DTO (§7.3.3). The DTO field names
+(`question`, `choices`, `answers` with `{id, value}`) match the extraction
+output vocabulary, so the verifier sees the same shape it is asked to return.
 
 #### 7.3.2 Prompt (`prompt.go`)
 
-System prompt:
+The system prompt is based on the `verify-extracted-questions` skill
+(`skills/verify-extracted-questions/SKILL.md`), which defines the verification
+contract: structural validation, answer correctness checks, and confidence
+re-evaluation. Like the extractor, we extend the skill format with `tags` on
+each question object. The verifier returns the **full** verified questions array
+plus a `_verification` summary. Store the prompt as a `const`:
 
-> You are an answer-checking reviewer. You receive a JSON array of questions,
-> each with its text, choices, and the correct answer(s) proposed by an
-> extraction model. For EACH question, independently judge whether the proposed
-> answer is correct.
->
-> Output ONLY a JSON object: `{"results":[{"index":0,"confidence":0.93,"explanation":"…"}, …]}`.
->
-> Rules:
-> - `index` is the 0-based position of the question in the input array.
-> - `confidence` (0.0–1.0) is your confidence the proposed answer is correct.
-> - `explanation` is a one-sentence justification. Empty string if fully confident.
-> - Do NOT modify the question text, choices, or answers. You only score them.
-> - If you cannot judge (question unclear, domain outside your knowledge), set
->   `confidence` to 0 and explain in `explanation`.
+```
+You are an answer-checking reviewer. You receive a JSON object containing
+questions extracted from an exam image. For EACH question, independently:
+1. Validate the JSON structure (fix missing/malformed fields — see rules below).
+2. Verify the answer is correct (re-solve if needed).
+3. Re-evaluate the confidence score.
+
+Output the verified JSON with the same {questions: [...]} structure, plus a
+"_verification" summary object:
+{
+  "_verification": {
+    "timestamp": "<ISO-8601>",
+    "questions_verified": <N>,
+    "structural_fixes": ["..."],
+    "answers_flagged": ["..."],
+    "confidence_adjustments": ["Question 1: 0.92 → 0.85 (reason)"],
+    "garbled_text_detected": ["..."],
+    "summary": "<one-line summary>"
+  },
+  "questions": [
+    {
+      "number": 1,
+      "question": "...",
+      "multiple_correct": false,
+      "choices": ["..."],
+      "answers": [{"id": "A", "value": "..."}],
+      "confidence": 0.85,
+      "explanation": "original text\n\n[VERIFICATION FLAG]\n...",
+      "tags": ["..."]
+    }
+  ]
+}
+
+Rules:
+- Do NOT modify the question text, choices array, or answers array. Those come
+  from the original image.
+- If you disagree with an answer, append a [VERIFICATION FLAG] block to the
+  explanation field — do NOT change the answers array. Format:
+    [VERIFICATION FLAG]
+    Original answer: {value} (id: {id})
+    Verifier suggests: {your answer} (id: {your id})
+    Reason: {brief reason}
+    Action: awaiting human review
+- Adjust the confidence field based on your assessment:
+    - Increase: straightforward, unambiguously correct, clear explanation.
+    - Decrease: garbled text, OCR artifacts, visual ambiguity you cannot see,
+      multiple_correct with missed answers.
+- Garbled text: note in explanation as
+  [NOTE: possible OCR error in question text — "X" may be "Y"]. Do NOT fix it.
+- Confidence ranges: 0.95-1.0 clear, 0.80-0.94 minor uncertainty,
+  0.50-0.79 significant uncertainty (human must verify), 0.0-0.49 unreliable.
+- The _verification summary lists: structural fixes, flagged answers,
+  confidence adjustments, garbled text detected, and a one-line summary.
+
+[Reference: skills/verify-extracted-questions/SKILL.md for the full specification]
+```
+
+The user message contains the extracted questions serialized as JSON using the
+`verificationInput` DTO format (§7.3.3) — same field names as the extraction
+output (`question`, `choices`, `answers`, etc.).
 
 #### 7.3.3 Schema & DTOs (`schema.go`)
 
 Same rationale as extractor: the pipeline `VerifiedQuestion` has no lowercase
-`json` tags, so define a JSON-tagged DTO and map.
+`json` tags, so define JSON-tagged DTOs and map. The verifier both **consumes**
+and **produces** the skill format — the input is serialized from
+`pipeline.ExtractedQuestion` (converted to the skill's `questionDTO` shape), and
+the output is the skill's verified format with the `_verification` summary.
 
 ```go
-type verifiedQuestionDTO struct {
-    Index       int    `json:"index"`
-    Confidence  float64 `json:"confidence"`
-    Explanation string `json:"explanation"`
+package verifier
+
+import "encoding/json"
+
+// answerDTO mirrors the extraction output's answer shape.
+type answerDTO struct {
+    ID    string `json:"id"`
+    Value string `json:"value"`
 }
 
+// questionDTO is the input shape — the questions serialized for the model.
+type questionDTO struct {
+    Number          int         `json:"number"`
+    Question        string      `json:"question"`
+    MultipleCorrect bool        `json:"multiple_correct"`
+    Choices         []string    `json:"choices"`
+    Answers         []answerDTO `json:"answers"`
+    Confidence      float64     `json:"confidence"`
+    Explanation     string      `json:"explanation"`
+    Tags            []string    `json:"tags,omitempty"`
+}
+
+// verificationInput is the top-level object sent to the model.
+type verificationInput struct {
+    Questions []questionDTO `json:"questions"`
+}
+
+// verifiedQuestionDTO is the output shape — what the model returns per question.
+type verifiedQuestionDTO struct {
+    Number          int         `json:"number"`
+    Question        string      `json:"question"`
+    MultipleCorrect bool        `json:"multiple_correct"`
+    Choices         []string    `json:"choices"`
+    Answers         []answerDTO `json:"answers"`
+    Confidence      float64     `json:"confidence"`  // adjusted by verifier
+    Explanation     string      `json:"explanation"` // may include [VERIFICATION FLAG]
+    Tags            []string    `json:"tags,omitempty"`
+}
+
+// verificationResponse is the top-level object the model returns.
 type verificationResponse struct {
-    Results []verifiedQuestionDTO `json:"results"`
+    Verification json.RawMessage       `json:"_verification"` // raw, persisted as Report
+    Questions    []verifiedQuestionDTO `json:"questions"`
 }
 ```
 
-Mapping:
+**Input conversion (`fromPipeline`):** the pipeline passes
+`[]pipeline.ExtractedQuestion`. The verifier converts each to the skill's
+`questionDTO` shape — flattening `Choices` (`[]pipeline.Answer` with ID+Text)
+back to plain strings, and converting `Answers` from `{ID, Text}` to `{id, value}`:
 
 ```go
-func toPipeline(r verificationResponse, raw json.RawMessage) pipeline.VerifyResult {
-    out := pipeline.VerifyResult{Report: raw}
-    out.Summary.Results = make([]pipeline.VerifiedQuestion, len(r.Results))
-    for i, q := range r.Results {
-        out.Summary.Results[i] = pipeline.VerifiedQuestion{
-            Index:       q.Index,
-            Confidence:  q.Confidence,
-            Explanation: q.Explanation,
+func fromPipeline(questions []pipeline.ExtractedQuestion) verificationInput {
+    out := verificationInput{Questions: make([]questionDTO, len(questions))}
+    for i, q := range questions {
+        choices := make([]string, len(q.Choices))
+        for j, c := range q.Choices {
+            choices[j] = c.Text // strip the synthesized ID; skill uses bare strings
+        }
+        answers := make([]answerDTO, len(q.Answers))
+        for j, a := range q.Answers {
+            answers[j] = answerDTO{ID: a.ID, Value: a.Text}
+        }
+        out.Questions[i] = questionDTO{
+            Number:          q.Number,
+            Question:        q.Text, // pipeline "Text" → skill "question"
+            MultipleCorrect: q.MultipleCorrect,
+            Choices:         choices,
+            Answers:         answers,
+            Confidence:      q.Confidence,
+            Tags:            q.Tags,
+            // Explanation left empty on input — the extractor does not carry it.
         }
     }
     return out
 }
 ```
 
-`Report` is the **raw** model JSON (the full `verificationResponse` bytes),
-persisted verbatim to `images.verification_report` by the pipeline
-(`pipeline.go:218`). Apply the same defensive fence-stripping as the extractor
-before parsing.
+**Output mapping (`toPipeline`):** the verifier returns the full question list.
+We map by **position** (index = position in the array, matching the input order).
+Only `Confidence` and `Explanation` are consumed into the pipeline's
+`VerifiedQuestion`; the rest is for the model's internal consistency and is
+captured in the raw `Report`.
+
+```go
+func toPipeline(r verificationResponse, inputCount int) pipeline.VerifyResult {
+    out := pipeline.VerifyResult{Report: r.Verification}
+    for i, q := range r.Questions {
+        if i >= inputCount {
+            break // safety: don't map beyond input range
+        }
+        out.Summary.Results = append(out.Summary.Results, pipeline.VerifiedQuestion{
+            Index:       i,             // 0-based position
+            Confidence:  q.Confidence,  // adjusted confidence
+            Explanation: q.Explanation, // includes verification flags
+        })
+    }
+    return out
+}
+```
+
+`Report` is the **raw** `_verification` JSON from the model response, persisted
+verbatim to `images.verification_report` by the pipeline (`pipeline.go:218`).
+Apply the same defensive fence-stripping as the extractor before parsing.
 
 #### Error handling
 
@@ -773,10 +1087,12 @@ warning and leaves questions in `moderation` (`pipeline.go:206-207`). On
 malformed JSON, return a Go error (treated identically to a transport error —
 best-effort skip).
 
-The `Index` field is trusted but the pipeline bounds-checks it
-(`pipeline.go:210`: `vq.Index >= 0 && vq.Index < len(newQs)`), so an out-of-range
-index is safely ignored. Do not silently clamp in the client — preserve what the
-model returned.
+The `Index` field is assigned by **position** in the returned questions array
+(matching the input order). If the model returns fewer questions than were sent,
+only those positions are mapped; the pipeline's existing bounds-check
+(`pipeline.go:210`: `vq.Index >= 0 && vq.Index < len(newQs)`) still applies. If
+the model returns more questions than were sent, the `i >= inputCount` guard in
+`toPipeline` prevents mapping beyond the input range.
 
 #### Tests (`verifier_test.go`)
 
@@ -784,7 +1100,8 @@ model returned.
 
 | Case | Server returns | Assert |
 |---|---|---|
-| Happy path | `{"results":[{"index":0,"confidence":0.9,"explanation":"ok"},{"index":1,"confidence":0.4,"explanation":"unsure"}]}` | `Summary.Results` length 2; fields mapped; `Report` is the raw bytes |
+| Happy path | `{"_verification":{"timestamp":"…","questions_verified":2,"summary":"…"},"questions":[{"number":1,"question":"…","confidence":0.9,"explanation":"ok",...},{"number":2,"question":"…","confidence":0.4,"explanation":"[VERIFICATION FLAG]…",...}]}` | `Summary.Results` length 2; `Index` 0 and 1 (by position); `Confidence` and `Explanation` mapped; `Report` is the raw `_verification` bytes |
+| Fewer questions returned | model returns 1 question for a 2-question input | `Summary.Results` length 1; only index 0 mapped |
 | Transport error (500) | 500 | non-nil Go error; zero-value result |
 | Malformed JSON | prose content | non-nil Go error |
 
@@ -863,9 +1180,10 @@ than hand-writing it.
 ### 8.1 `internal/app/wire.go`
 
 Replace the `TODO(plan-3)` block (`wire.go:51-59`) with real construction.
-`Build` stays side-effect-free — it constructs the `WorkerPool` but does **not**
-call `Start` (that is `main.go`'s job, so `Build` remains testable and the
-start point is explicit).
+`Build` stays side-effect-free except for one lifecycle call: `vips.Startup`
+must run before the enhancer is constructed (and before any govips operation).
+`Build` constructs the `WorkerPool` but does **not** call `Start` (that is
+`main.go`'s job, so `Build` remains testable and the start point is explicit).
 
 Add a logger at the top of `Build`:
 
@@ -876,6 +1194,8 @@ log := slog.Default()
 Construction block:
 
 ```go
+vips.Startup(nil) // initialize libvips before any image processing
+
 enhancer  := enhancer.New(log)
 extractor := extractor.New(cfg.AI.Vision, log)
 verifier  := verifier.New(cfg.AI.Reviewer, log)
@@ -890,7 +1210,8 @@ wp := pipeline.NewWorkerPool(jobQueue, pip,
 
 Add `WorkerPool: wp` to the returned `App` struct (the field already exists at
 `wire.go:25`). New imports: `internal/ai/enhancer`, `internal/ai/extractor`,
-`internal/ai/verifier`, `internal/ai/embedder`.
+`internal/ai/verifier`, `internal/ai/embedder`, and
+`github.com/davidbyttow/govips/v2/vips` (for `vips.Startup`).
 
 ### 8.2 `cmd/coeus/main.go`
 
@@ -907,14 +1228,17 @@ pending jobs immediately.
 
 ### 8.3 `App.Close()`
 
-Stop workers **before** closing the pool, so in-flight jobs finish (or release)
-while the DB is still reachable:
+Stop workers **before** shutting down libvips, and shut down libvips **before**
+closing the DB pool — so in-flight jobs finish (or release) while the DB is
+still reachable, and govips finishes any pending image work before libvips
+itself is torn down:
 
 ```go
 func (a *App) Close() {
     if a.WorkerPool != nil {
         a.WorkerPool.Stop()
     }
+    vips.Shutdown() // release libvips resources
     if a.Pool != nil {
         a.Pool.Close()
     }
@@ -922,7 +1246,8 @@ func (a *App) Close() {
 ```
 
 `WorkerPool.Stop()` (`worker.go:85`) cancels the worker context and waits on the
-`WaitGroup`, so all goroutines exit before `Pool.Close()` runs.
+`WaitGroup`, so all goroutines exit before `vips.Shutdown()` and `Pool.Close()`
+run.
 
 ### 8.4 Shutdown sequence on SIGINT/SIGTERM
 
@@ -935,11 +1260,11 @@ dimension. On signal (`main.go:56`):
    error **without** completing or failing the job (`pipeline.go:63-68`), so the
    reaper reclaims them on next startup.
 3. `defer application.Close()` runs → `WorkerPool.Stop()` (waits for goroutines)
-   → `Pool.Close()`.
+   → `vips.Shutdown()` (releases libvips) → `Pool.Close()`.
 
 This ordering means: HTTP goes down first (no new uploads), then workers drain,
-then the DB closes. No code change needed beyond §8.3 — the order is already
-correct.
+then libvips shuts down, then the DB closes. No code change needed beyond §8.3
+— the order is already correct.
 
 ---
 
@@ -1070,13 +1395,15 @@ implementations; the compiler will flag any stragglers.
 
 Every AI client is tested in isolation with `httptest.NewServer` and fixture
 JSON. The server URL is passed as the client's `base_url`, so the client hits
-the test server exactly as it would hit a real provider.
+the test server exactly as it would hit a real provider. The enhancer is the
+exception: it uses govips (no HTTP), so its tests exercise real image bytes
+through libvips directly.
 
 | Package | Harness | Key cases (see §7 for full lists) |
 |---|---|---|
-| `enhancer` | pure Go, real synthesized image bytes | JPEG/PNG/WebP round-trip, invalid bytes, unsupported MIME |
-| `extractor` | httptest server | happy, unreadable, no-questions, partial, 500, malformed-JSON, timeout, base-URL |
-| `verifier` | httptest server | happy, 500, malformed-JSON |
+| `enhancer` | govips (CGO/libvips), real synthesized image bytes | JPEG/PNG/WebP round-trip, invalid bytes, unsupported MIME |
+| `extractor` | httptest server | happy (with tags), unreadable, no-questions, partial, 500, malformed-JSON, timeout, base-URL |
+| `verifier` | httptest server | happy, fewer-questions-returned, 500, malformed-JSON |
 | `embedder` | httptest server | happy (1536 dims, `[]float32`), 500, empty text, dim mismatch |
 
 **Shared helper:** create a small unexported helper in each `_test.go` (or a
@@ -1157,7 +1484,6 @@ CI):
 |---|---|---|
 | `CleanBytes` (null out `image_data`/`enhanced_data` once all derived questions are verified) | Tied to the expert-moderation workflow that doesn't exist yet. `ImageRepo.CleanBytes` (`ports.go:51`) already exists; pipeline just doesn't call it. | Moderation plan |
 | Expert moderation endpoints (`PATCH /questions/:id`) | Requires the expert UI/role workflow. | Moderation plan |
-| Populating `ExtractedQuestion.Tags` / `Question.Tags` from the model | Schema supports it; prompts request it; but downstream tag-driven features aren't built. Field stays empty in Plan 3. | Future plan |
 | `ResponseFormatJSONObject` → `ResponseFormatJSONSchema` | Wait for live-API confirmation; then pass the invopop-generated schema as the structured-output constraint. | Follow-up after smoke test |
 | Per-provider rate limiting / circuit breaking | Not needed at current volume. | Future plan |
 | Live contract tests | Brittle and provider-dependent. Manual smoke test covers confidence. | N/A |
@@ -1168,18 +1494,25 @@ CI):
 
 A dependency-respecting order for an implementer executing this spec:
 
+> **Prerequisite:** install libvips before any govips code will build:
+> - **macOS:** `brew install vips pkg-config`
+> - **Linux:** `apt install libvips-dev`
+>
+> CGO must be enabled (`CGO_ENABLED=1`, the default for native builds).
+
 1. **Config** (§5) — rename structs, env vars, YAML; add validation. Update
    `config_test.go`. `go test ./internal/config`.
 2. **`oai` wrapper** (§4.2) — tiny, unexported, no tests of its own.
-3. **Enhancer** (§7.1) — no external calls; fastest to validate end-to-end.
+3. **Enhancer** (§7.1) — govips; requires libvips installed. Fastest to validate
+   end-to-end (no network calls).
 4. **Embedder** (§7.4) — simplest LLM client; validates the `oai` + httptest
    pattern.
 5. **Verifier** (§7.3) — text-only LLM; reuses the pattern.
 6. **Extractor** (§7.2) — most complex (multimodal + error taxonomy); build last.
 7. **N+1 fix** (§9) — independent of the clients; can be done in parallel with
    3–6.
-8. **Wiring** (§8) — construct everything in `wire.go`, add `Start` in
-   `main.go`, update `App.Close`.
+8. **Wiring** (§8) — construct everything in `wire.go` (including `vips.Startup`),
+   add `Start` in `main.go`, update `App.Close` (including `vips.Shutdown`).
 9. **Full build + test** (§10.5) — `go build ./...`, `go vet ./...`,
    `go test ./...`.
 10. **Smoke test** (§10.6) — manual, with real keys.

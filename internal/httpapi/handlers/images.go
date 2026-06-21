@@ -89,6 +89,7 @@ func (h *ImageHandler) Upload(c *gin.Context) {
 }
 
 // List returns all images for the current session along with their job status.
+// Job status is fetched in one bulk query (not per-image) to avoid N+1.
 func (h *ImageHandler) List(c *gin.Context) {
 	sess, exists := c.Get("session")
 	if !exists {
@@ -105,15 +106,17 @@ func (h *ImageHandler) List(c *gin.Context) {
 		return
 	}
 
+	statuses, err := h.jobs.FindJobStatusesBySession(ctx, session.ID)
+	if err != nil {
+		slog.Warn("find job statuses for session failed", "session", session.ID, "error", err)
+		statuses = make(map[string]string) // degrade gracefully — all "unknown"
+	}
+
 	data := make([]dto.ImageResponse, 0, len(images))
 	for _, img := range images {
-		jobStatus := "unknown"
-		job, err := h.jobs.FindByImageID(ctx, img.ID)
-		if err != nil {
-			slog.Warn("find job for image failed", "image", img.ID, "error", err)
-		}
-		if job != nil {
-			jobStatus = job.Status
+		jobStatus := statuses[img.ID]
+		if jobStatus == "" {
+			jobStatus = "unknown"
 		}
 		data = append(data, dto.ImageResponse{
 			ID:        img.ID,

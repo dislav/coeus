@@ -227,6 +227,9 @@ func (q *fakeJobQueue) ReaperReclaim(context.Context, time.Duration, int) (recla
 func (q *fakeJobQueue) FindByImageID(context.Context, string) (*domain.Job, error) {
 	return nil, nil
 }
+func (q *fakeJobQueue) FindJobStatusesBySession(context.Context, string) (map[string]string, error) {
+	return nil, nil
+}
 
 // --- Helpers ---
 

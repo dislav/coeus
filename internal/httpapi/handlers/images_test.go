@@ -65,6 +65,7 @@ type fakeJobQueueForImages struct {
 	imageID    string
 	sessionID  string
 	jobByImage *domain.Job
+	statuses   map[string]string
 }
 
 func (q *fakeJobQueueForImages) Enqueue(_ context.Context, imageID, sessionID string) (string, error) {
@@ -81,6 +82,9 @@ func (q *fakeJobQueueForImages) ReaperReclaim(context.Context, time.Duration, in
 }
 func (q *fakeJobQueueForImages) FindByImageID(_ context.Context, _ string) (*domain.Job, error) {
 	return q.jobByImage, nil
+}
+func (q *fakeJobQueueForImages) FindJobStatusesBySession(_ context.Context, _ string) (map[string]string, error) {
+	return q.statuses, nil
 }
 
 func validPNG(t *testing.T) []byte {
@@ -171,7 +175,7 @@ func TestImageHandler_List(t *testing.T) {
 			{ID: "img-1", Mime: "image/png", Width: 100, Height: 200, CreatedAt: "2026-06-20T12:00:00Z"},
 		},
 	}
-	jq := &fakeJobQueueForImages{jobByImage: &domain.Job{ID: "job-1", Status: domain.JobStatusDone}}
+	jq := &fakeJobQueueForImages{statuses: map[string]string{"img-1": domain.JobStatusDone}}
 	uploadCfg := config.UploadConfig{}
 	h := NewImageHandler(imgRepo, jq, uploadCfg)
 	r := newImageRouter(h)

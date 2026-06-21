@@ -44,19 +44,19 @@ type JWTConfig struct {
 }
 
 type AIConfig struct {
-	Kimi     KimiConfig     `yaml:"kimi"`
-	DeepSeek DeepSeekConfig `yaml:"deepseek"`
+	Vision   VisionConfig   `yaml:"vision"`
+	Reviewer ReviewerConfig `yaml:"reviewer"`
 	Embedder EmbedderConfig `yaml:"embedder"`
 }
 
-type KimiConfig struct {
+type VisionConfig struct {
 	BaseURL string        `yaml:"base_url"`
 	APIKey  string        `yaml:"api_key"`
 	Model   string        `yaml:"model"`
 	Timeout time.Duration `yaml:"timeout"`
 }
 
-type DeepSeekConfig struct {
+type ReviewerConfig struct {
 	BaseURL string        `yaml:"base_url"`
 	APIKey  string        `yaml:"api_key"`
 	Model   string        `yaml:"model"`
@@ -107,17 +107,17 @@ func applyEnvOverrides(cfg *Config) error {
 	if v := os.Getenv("COEUS_JWT_SECRET"); v != "" {
 		cfg.JWT.Secret = v
 	}
-	if v := os.Getenv("COEUS_AI_KIMI_API_KEY"); v != "" {
-		cfg.AI.Kimi.APIKey = v
+	if v := os.Getenv("COEUS_AI_VISION_API_KEY"); v != "" {
+		cfg.AI.Vision.APIKey = v
 	}
-	if v := os.Getenv("COEUS_AI_KIMI_BASE_URL"); v != "" {
-		cfg.AI.Kimi.BaseURL = v
+	if v := os.Getenv("COEUS_AI_VISION_BASE_URL"); v != "" {
+		cfg.AI.Vision.BaseURL = v
 	}
-	if v := os.Getenv("COEUS_AI_DEEPSEEK_API_KEY"); v != "" {
-		cfg.AI.DeepSeek.APIKey = v
+	if v := os.Getenv("COEUS_AI_REVIEWER_API_KEY"); v != "" {
+		cfg.AI.Reviewer.APIKey = v
 	}
-	if v := os.Getenv("COEUS_AI_DEEPSEEK_BASE_URL"); v != "" {
-		cfg.AI.DeepSeek.BaseURL = v
+	if v := os.Getenv("COEUS_AI_REVIEWER_BASE_URL"); v != "" {
+		cfg.AI.Reviewer.BaseURL = v
 	}
 	if v := os.Getenv("COEUS_AI_EMBEDDER_API_KEY"); v != "" {
 		cfg.AI.Embedder.APIKey = v
@@ -139,13 +139,23 @@ func applyEnvOverrides(cfg *Config) error {
 }
 
 // Validate checks that secrets required by the current plan are set.
-// AI API key validation will be added in Plan 2/3 when those services are wired.
+// AI API keys are required so the app fails fast at startup rather than
+// failing per-request inside the pipeline.
 func (c *Config) Validate() error {
 	if c.Postgres.DSN == "" {
 		return fmt.Errorf("postgres.dsn is required (set COEUS_POSTGRES_DSN)")
 	}
 	if c.JWT.Secret == "" {
 		return fmt.Errorf("jwt.secret is required (set COEUS_JWT_SECRET)")
+	}
+	if c.AI.Vision.APIKey == "" {
+		return fmt.Errorf("ai.vision.api_key is required (set COEUS_AI_VISION_API_KEY)")
+	}
+	if c.AI.Reviewer.APIKey == "" {
+		return fmt.Errorf("ai.reviewer.api_key is required (set COEUS_AI_REVIEWER_API_KEY)")
+	}
+	if c.AI.Embedder.APIKey == "" {
+		return fmt.Errorf("ai.embedder.api_key is required (set COEUS_AI_EMBEDDER_API_KEY)")
 	}
 	return nil
 }

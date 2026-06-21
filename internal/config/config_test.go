@@ -9,8 +9,8 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("COEUS_POSTGRES_DSN", "postgres://test:test@localhost:5432/coeus?sslmode=disable")
 	t.Setenv("COEUS_JWT_SECRET", "test-secret")
-	t.Setenv("COEUS_AI_KIMI_API_KEY", "kimi-key")
-	t.Setenv("COEUS_AI_DEEPSEEK_API_KEY", "ds-key")
+	t.Setenv("COEUS_AI_VISION_API_KEY", "kimi-key")
+	t.Setenv("COEUS_AI_REVIEWER_API_KEY", "ds-key")
 	t.Setenv("COEUS_AI_EMBEDDER_API_KEY", "emb-key")
 
 	cfg, err := Load()
@@ -37,8 +37,8 @@ func TestLoadDefaults(t *testing.T) {
 func TestEnvOverridesYAML(t *testing.T) {
 	t.Setenv("COEUS_POSTGRES_DSN", "postgres://test:test@localhost:5432/coeus?sslmode=disable")
 	t.Setenv("COEUS_JWT_SECRET", "test-secret")
-	t.Setenv("COEUS_AI_KIMI_API_KEY", "kimi-key")
-	t.Setenv("COEUS_AI_DEEPSEEK_API_KEY", "ds-key")
+	t.Setenv("COEUS_AI_VISION_API_KEY", "kimi-key")
+	t.Setenv("COEUS_AI_REVIEWER_API_KEY", "ds-key")
 	t.Setenv("COEUS_AI_EMBEDDER_API_KEY", "emb-key")
 	t.Setenv("COEUS_SERVER_ADDR", ":9090")
 
@@ -100,11 +100,35 @@ func TestValidate_MissingSecrets(t *testing.T) {
 			t.Errorf("Validate() error = %q, expected to mention jwt.secret", err.Error())
 		}
 	})
+
+	t.Run("missing ai api keys", func(t *testing.T) {
+		t.Setenv("COEUS_POSTGRES_DSN", "postgres://test:test@localhost:5432/coeus?sslmode=disable")
+		t.Setenv("COEUS_JWT_SECRET", "test-secret")
+		t.Setenv("COEUS_AI_REVIEWER_API_KEY", "reviewer-key")
+		t.Setenv("COEUS_AI_EMBEDDER_API_KEY", "emb-key")
+		// vision key intentionally omitted
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+
+		err = cfg.Validate()
+		if err == nil {
+			t.Fatal("Validate() expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "ai.vision.api_key") {
+			t.Errorf("Validate() error = %q, expected to mention ai.vision.api_key", err.Error())
+		}
+	})
 }
 
 func TestValidate_WithSecrets(t *testing.T) {
 	t.Setenv("COEUS_POSTGRES_DSN", "postgres://test:test@localhost:5432/coeus?sslmode=disable")
 	t.Setenv("COEUS_JWT_SECRET", "test-secret")
+	t.Setenv("COEUS_AI_VISION_API_KEY", "vision-key")
+	t.Setenv("COEUS_AI_REVIEWER_API_KEY", "reviewer-key")
+	t.Setenv("COEUS_AI_EMBEDDER_API_KEY", "emb-key")
 
 	cfg, err := Load()
 	if err != nil {

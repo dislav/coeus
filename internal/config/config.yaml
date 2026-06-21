@@ -13,10 +13,10 @@ jwt:
   refresh_ttl: 168h
 
 ai:
-  kimi:
+  vision:
     model: "kimi-k2.7"
     timeout: 90s
-  deepseek:
+  reviewer:
     model: "deepseek-v4-pro"
     timeout: 60s
   embedder:

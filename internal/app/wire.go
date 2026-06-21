@@ -3,8 +3,15 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 
+	"github.com/davidbyttow/govips/v2/vips"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/vlgrigoriev/coeus/internal/ai/embedder"
+	"github.com/vlgrigoriev/coeus/internal/ai/enhancer"
+	"github.com/vlgrigoriev/coeus/internal/ai/extractor"
+	"github.com/vlgrigoriev/coeus/internal/ai/verifier"
 	"github.com/vlgrigoriev/coeus/internal/auth"
 	"github.com/vlgrigoriev/coeus/internal/config"
 	"github.com/vlgrigoriev/coeus/internal/httpapi"
@@ -22,10 +29,12 @@ type App struct {
 	JobQueue     *postgres.JobQueue
 	JWTMgr       *auth.JWTManager
 	Server       *httpapi.Server
-	WorkerPool   *pipeline.WorkerPool // TODO(plan-3): constructed once AI clients exist
+	WorkerPool   *pipeline.WorkerPool
 }
 
 func Build(ctx context.Context, cfg *config.Config) (*App, error) {
+	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
 	pool, err := postgres.NewPool(ctx, cfg.Postgres)
 	if err != nil {
 		return nil, fmt.Errorf("build pool: %w", err)
@@ -48,25 +57,33 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		jwtMgr, pool, cfg.Upload,
 	)
 
-	// TODO(plan-3): construct Pipeline + WorkerPool + spawn workers.
-	// Real ImageEnhancer / AIExtractor / AIVerifier / AIEmbedder implementations
-	// are deferred to Plan 3 — until then, uploaded images stay in 'pending'.
-	//
-	// pip := pipeline.NewPipeline(imageRepo, questionRepo, jobQueue,
-	//     enhancer, extractor, verifier, embedder, cfg.Pipeline, log)
-	// wp := pipeline.NewWorkerPool(jobQueue, pip, cfg.Workers, cfg.Pipeline, cfg.Postgres.DSN, log)
-	// wp.Start(ctx)
-	// app.WorkerPool = wp
+	vips.Startup(nil)
+
+	enh := enhancer.New(log)
+	ext := extractor.New(cfg.AI.Vision, log)
+	ver := verifier.New(cfg.AI.Reviewer, log)
+	emb := embedder.New(cfg.AI.Embedder, log)
+
+	pip := pipeline.NewPipeline(imageRepo, questionRepo, jobQueue,
+		enh, ext, ver, emb, cfg.Pipeline, log)
+
+	wp := pipeline.NewWorkerPool(jobQueue, pip,
+		cfg.Workers, cfg.Pipeline, cfg.Postgres.DSN, log)
 
 	return &App{
 		Config: cfg, Pool: pool,
 		UserRepo: userRepo, SessionRepo: sessionRepo,
 		ImageRepo: imageRepo, QuestionRepo: questionRepo,
 		JobQueue: jobQueue, JWTMgr: jwtMgr, Server: server,
+		WorkerPool: wp,
 	}, nil
 }
 
 func (a *App) Close() {
+	if a.WorkerPool != nil {
+		a.WorkerPool.Stop()
+	}
+	vips.Shutdown()
 	if a.Pool != nil {
 		a.Pool.Close()
 	}

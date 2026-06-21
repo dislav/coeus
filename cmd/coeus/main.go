@@ -35,6 +35,8 @@ func main() {
 	}
 	defer application.Close()
 
+	application.WorkerPool.Start(ctx)
+
 	slog.Info("coeus started", "addr", cfg.Server.Addr)
 
 	httpServer := &http.Server{

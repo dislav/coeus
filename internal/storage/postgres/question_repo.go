@@ -406,9 +406,9 @@ const questionExpertSelectBase = `
 	       q.status,
 	       (SELECT sq.image_id FROM session_questions sq
 	           WHERE sq.question_id = q.id ORDER BY sq.id LIMIT 1) AS image_id,
-	       (SELECT im.verification_report IS NOT NULL
+	       COALESCE((SELECT im.verification_report IS NOT NULL
 	          FROM session_questions sq JOIN images im ON im.id = sq.image_id
-	          WHERE sq.question_id = q.id ORDER BY sq.id LIMIT 1) AS has_verification_report
+	          WHERE sq.question_id = q.id ORDER BY sq.id LIMIT 1), false) AS has_verification_report
 	FROM questions q`
 
 func scanQuestion(row pgx.Row) (*domain.Question, error) {
@@ -469,12 +469,8 @@ func scanQuestionExpert(row interface {
 	); err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(choices, &q.Choices); err != nil {
-		return nil, fmt.Errorf("unmarshal choices: %w", err)
-	}
-	if err := json.Unmarshal(answers, &q.Answers); err != nil {
-		return nil, fmt.Errorf("unmarshal answers: %w", err)
-	}
+	_ = json.Unmarshal(choices, &q.Choices)
+	_ = json.Unmarshal(answers, &q.Answers)
 	q.VerifiedAt = verifiedAt
 	q.VerifiedBy = verBy
 	ev := &storage.QuestionExpertView{Question: &q, HasVerificationReport: hasReport}

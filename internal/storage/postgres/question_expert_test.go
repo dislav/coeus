@@ -8,9 +8,6 @@ import (
 )
 
 func TestUpdateByExpert_CleansImageBytesWhenLastResolved(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test (needs Docker)")
-	}
 	ctx := context.Background()
 	pool := setupTestDB(t)
 
@@ -54,7 +51,11 @@ func TestUpdateByExpert_CleansImageBytesWhenLastResolved(t *testing.T) {
 	if err := questions.UpdateByExpert(ctx, q1, []string{"a"}, []string{"a"}, "", 1.0, nil, user.ID); err != nil {
 		t.Fatalf("update q1: %v", err)
 	}
-	if img, _ := imgs.FindByID(ctx, imgID); img.Original == nil {
+	img, err := imgs.FindByID(ctx, imgID)
+	if err != nil {
+		t.Fatalf("find image: %v", err)
+	}
+	if img.Original == nil {
 		t.Fatal("bytes cleaned too early: q2 still moderation")
 	}
 
@@ -62,7 +63,7 @@ func TestUpdateByExpert_CleansImageBytesWhenLastResolved(t *testing.T) {
 	if err := questions.UpdateByExpert(ctx, q2, []string{"b"}, []string{"b"}, "", 1.0, nil, user.ID); err != nil {
 		t.Fatalf("update q2: %v", err)
 	}
-	img, err := imgs.FindByID(ctx, imgID)
+	img, err = imgs.FindByID(ctx, imgID)
 	if err != nil {
 		t.Fatalf("find image: %v", err)
 	}
@@ -76,9 +77,6 @@ func TestUpdateByExpert_CleansImageBytesWhenLastResolved(t *testing.T) {
 }
 
 func TestUpdateByExpert_CleansImageBytesWhenErrorSiblingResolved(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test (needs Docker)")
-	}
 	ctx := context.Background()
 	pool := setupTestDB(t)
 
@@ -122,7 +120,11 @@ func TestUpdateByExpert_CleansImageBytesWhenErrorSiblingResolved(t *testing.T) {
 	if err := questions.UpdateByExpert(ctx, qMod, []string{"a"}, []string{"a"}, "", 1.0, nil, user.ID); err != nil {
 		t.Fatalf("update moderation question: %v", err)
 	}
-	if img, _ := imgs.FindByID(ctx, imgID); img.Original == nil {
+	img, err := imgs.FindByID(ctx, imgID)
+	if err != nil {
+		t.Fatalf("find image: %v", err)
+	}
+	if img.Original == nil {
 		t.Fatal("bytes cleaned too early: error sibling still unresolved")
 	}
 
@@ -130,7 +132,7 @@ func TestUpdateByExpert_CleansImageBytesWhenErrorSiblingResolved(t *testing.T) {
 	if err := questions.UpdateByExpert(ctx, qErr, []string{"a"}, []string{"a"}, "", 1.0, nil, user.ID); err != nil {
 		t.Fatalf("update error question: %v", err)
 	}
-	img, err := imgs.FindByID(ctx, imgID)
+	img, err = imgs.FindByID(ctx, imgID)
 	if err != nil {
 		t.Fatalf("find image: %v", err)
 	}
@@ -140,9 +142,6 @@ func TestUpdateByExpert_CleansImageBytesWhenErrorSiblingResolved(t *testing.T) {
 }
 
 func TestFindExpertByID_ReturnsImageLinkAndReportFlag(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration test (needs Docker)")
-	}
 	ctx := context.Background()
 	pool := setupTestDB(t)
 
@@ -151,10 +150,21 @@ func TestFindExpertByID_ReturnsImageLinkAndReportFlag(t *testing.T) {
 	sessions := NewSessionRepo(pool)
 	users := NewUserRepo(pool)
 
-	user, _ := users.Create(ctx, "expert-view@example.com", "hash", "user")
-	sess, _ := sessions.Create(ctx, user.ID, 3600, 0)
-	imgID, _ := imgs.Create(ctx, sess.ID, []byte("orig"), "image/png", 10, 10)
-	_ = imgs.UpdateVerificationReport(ctx, imgID, []byte(`{"flag":true}`))
+	user, err := users.Create(ctx, "expert-view@example.com", "hash", "user")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	sess, err := sessions.Create(ctx, user.ID, 3600, 0)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	imgID, err := imgs.Create(ctx, sess.ID, []byte("orig"), "image/png", 10, 10)
+	if err != nil {
+		t.Fatalf("create image: %v", err)
+	}
+	if err := imgs.UpdateVerificationReport(ctx, imgID, []byte(`{"flag":true}`)); err != nil {
+		t.Fatalf("update verification report: %v", err)
+	}
 
 	qID, err := questions.Create(ctx, &domain.Question{Text: "Q", TextHash: "qe-hash", TextNorm: "qe", Status: domain.QuestionStatusModeration, Choices: []string{"a"}, ChoiceLabeling: "letter"})
 	if err != nil {

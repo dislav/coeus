@@ -63,10 +63,12 @@ func TestQuestionRepo_FindSemanticAboveThreshold(t *testing.T) {
 	emb[0] = 1.0
 	q := &domain.Question{
 		Number: 1, Text: "q", TextNorm: "q", TextHash: "h1",
-		Choices: []string{}, Answers: []string{}, Confidence: 0.9,
+		Choices: []string{}, Answers: []string{}, ChoiceLabeling: "letter", Confidence: 0.9,
 		Embedding: emb, Status: domain.QuestionStatusModeration, Tags: []string{"ai-generated"},
 	}
-	repo.Create(ctx, q)
+	if _, err := repo.Create(ctx, q); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	search := make([]float32, 1536)
 	search[0] = 1.0
@@ -88,10 +90,12 @@ func TestQuestionRepo_FindSemanticBelowThreshold(t *testing.T) {
 	emb[0] = 1.0
 	q := &domain.Question{
 		Number: 1, Text: "q", TextNorm: "q", TextHash: "h1",
-		Choices: []string{}, Answers: []string{}, Confidence: 0.9,
+		Choices: []string{}, Answers: []string{}, ChoiceLabeling: "letter", Confidence: 0.9,
 		Embedding: emb, Status: domain.QuestionStatusModeration, Tags: []string{"ai-generated"},
 	}
-	repo.Create(ctx, q)
+	if _, err := repo.Create(ctx, q); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
 	search := make([]float32, 1536)
 	search[1] = 1.0 // orthogonal — cosine similarity = 0.0
@@ -111,15 +115,23 @@ func TestQuestionRepo_UpdateFromVerification(t *testing.T) {
 
 	q := &domain.Question{
 		Number: 1, Text: "q", TextNorm: "q", TextHash: "h",
-		Choices: []string{"a"}, Answers: []string{"a"}, Confidence: 0.90,
+		Choices: []string{"a"}, Answers: []string{"a"}, ChoiceLabeling: "letter", Confidence: 0.90,
 		Explanation: "original", Embedding: make([]float32, 1536),
 		Status: domain.QuestionStatusModeration, Tags: []string{"ai-generated"},
 	}
-	id, _ := repo.Create(ctx, q)
+	id, err := repo.Create(ctx, q)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 
-	repo.UpdateFromVerification(ctx, id, 0.75, "original [VERIFICATION FLAG]")
+	if err := repo.UpdateFromVerification(ctx, id, 0.75, "original [VERIFICATION FLAG]"); err != nil {
+		t.Fatalf("UpdateFromVerification: %v", err)
+	}
 
-	found, _ := repo.FindByID(ctx, id)
+	found, err := repo.FindByID(ctx, id)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
 	if found.Confidence != 0.75 {
 		t.Errorf("confidence = %v, want 0.75", found.Confidence)
 	}
@@ -141,11 +153,16 @@ func TestQuestionRepo_CountUnresolvedForImage(t *testing.T) {
 	for i, status := range statuses {
 		q := &domain.Question{
 			Number: i + 1, Text: "q", TextNorm: "q", TextHash: "hash" + string(rune('a'+i)),
-			Choices: []string{}, Answers: []string{}, Confidence: 0.9,
+			Choices: []string{}, Answers: []string{}, ChoiceLabeling: "letter", Confidence: 0.9,
 			Embedding: make([]float32, 1536), Status: status, Tags: []string{"ai-generated"},
 		}
-		qID, _ := qRepo.Create(ctx, q)
-		qRepo.LinkToSession(ctx, sess.ID, imgID, qID, i+1, 0.9)
+		qID, err := qRepo.Create(ctx, q)
+		if err != nil {
+			t.Fatalf("Create question %d: %v", i, err)
+		}
+		if err := qRepo.LinkToSession(ctx, sess.ID, imgID, qID, i+1, 0.9); err != nil {
+			t.Fatalf("LinkToSession question %d: %v", i, err)
+		}
 	}
 
 	count, err := qRepo.CountUnresolvedForImage(ctx, imgID)

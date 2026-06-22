@@ -14,7 +14,7 @@ jwt:
 
 ai:
   vision:
-    model: "kimi-k2.7"
+    model: "kimi-k2.6"
     timeout: 90s
   reviewer:
     model: "deepseek-v4-pro"

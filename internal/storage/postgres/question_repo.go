@@ -143,19 +143,11 @@ func (r *QuestionRepo) ListForUser(ctx context.Context, sessionID string, status
 
 	var results []*storage.QuestionWithSession
 	for rows.Next() {
-		var qws storage.QuestionWithSession
-		qws.Question = &domain.Question{}
-		var choices, answers []byte
-		if err := rows.Scan(
-			&qws.ID, &qws.Number, &qws.Text, &qws.MultipleCorrect,
-			&choices, &answers, &qws.ChoiceLabeling, &qws.Confidence, &qws.Status,
-			&qws.SessionID, &qws.ImageID, &qws.ExtractedNumber, &qws.ExtractedConfidence,
-		); err != nil {
+		qws, err := scanQuestionWithSession(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
-		json.Unmarshal(choices, &qws.Choices)
-		json.Unmarshal(answers, &qws.Answers)
-		results = append(results, &qws)
+		results = append(results, qws)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list questions for user: %w", err)
@@ -207,6 +199,82 @@ func (r *QuestionRepo) ListForModeration(ctx context.Context, statusFilter, tagF
 		return nil, fmt.Errorf("list for moderation: %w", err)
 	}
 	return questions, nil
+}
+
+func (r *QuestionRepo) FindExpertByID(ctx context.Context, id string) (*storage.QuestionExpertView, error) {
+	row := r.pool.QueryRow(ctx, questionExpertSelectBase+` WHERE q.id = $1`, id)
+	ev, err := scanQuestionExpert(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("find expert question: %w", domain.ErrNotFound)
+		}
+		return nil, fmt.Errorf("find expert question: %w", err)
+	}
+	ev.Tags, _ = r.getTags(ctx, ev.ID)
+	return ev, nil
+}
+
+func (r *QuestionRepo) ListForModerationExpert(ctx context.Context, statusFilter, tagFilter string, limit, offset int) ([]*storage.QuestionExpertView, error) {
+	query := questionExpertSelectBase
+	args := []interface{}{}
+	idx := 1
+	query += fmt.Sprintf(` WHERE q.status = $%d`, idx)
+	args = append(args, statusFilter)
+	idx++
+	if tagFilter != "" {
+		query += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM question_tags qt
+			JOIN tags t ON t.id = qt.tag_id
+			WHERE qt.question_id = q.id AND t.name = $%d)`, idx)
+		args = append(args, tagFilter)
+		idx++
+	}
+	query += fmt.Sprintf(` ORDER BY q.created_at LIMIT $%d OFFSET $%d`, idx, idx+1)
+	args = append(args, limit, offset)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list moderation expert: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]*storage.QuestionExpertView, 0)
+	for rows.Next() {
+		ev, err := scanQuestionExpert(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		ev.Tags, _ = r.getTags(ctx, ev.ID)
+		results = append(results, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list moderation expert: %w", err)
+	}
+	return results, nil
+}
+
+// FindForUserByID returns the question only if it is linked to a session owned
+// by userID (enforces ownership at the repo level; 404 otherwise). It reuses
+// QuestionWithSession and picks the earliest-linked session deterministically.
+func (r *QuestionRepo) FindForUserByID(ctx context.Context, questionID, userID string) (*storage.QuestionWithSession, error) {
+	query := `
+		SELECT q.id, q.number, q.question, q.multiple_correct, q.choices, q.answers,
+		       q.choice_labeling, q.confidence, q.status,
+		       sq.session_id, sq.image_id, sq.extracted_number, sq.extracted_confidence
+		FROM session_questions sq
+		JOIN questions q ON q.id = sq.question_id
+		JOIN sessions s ON s.id = sq.session_id
+		WHERE sq.question_id = $1 AND s.user_id = $2
+		ORDER BY sq.id
+		LIMIT 1`
+	row := r.pool.QueryRow(ctx, query, questionID, userID)
+	qws, err := scanQuestionWithSession(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("find user question: %w", domain.ErrNotFound)
+		}
+		return nil, fmt.Errorf("find user question: %w", err)
+	}
+	return qws, nil
 }
 
 func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, answers, choices []string, explanation string, confidence float64, tags []string, expertID string) error {
@@ -325,6 +393,24 @@ const questionSelectBase = `
 	       q.status
 	FROM questions q`
 
+// questionExpertSelectBase is questionSelectBase's column list plus the
+// representative image_id and verification_report-presence flag, expressed as
+// correlated subqueries so the queue can keep its ORDER BY q.created_at
+// (DISTINCT ON would force ORDER BY q.id first).
+const questionExpertSelectBase = `
+	SELECT q.id, q.number, q.question, q.question_normalized, q.question_hash,
+	       q.multiple_correct, q.choices, q.answers, q.choice_labeling,
+	       q.confidence, q.explanation,
+	       to_char(q.verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	       q.verified_by::text,
+	       q.status,
+	       (SELECT sq.image_id FROM session_questions sq
+	           WHERE sq.question_id = q.id ORDER BY sq.id LIMIT 1) AS image_id,
+	       (SELECT im.verification_report IS NOT NULL
+	          FROM session_questions sq JOIN images im ON im.id = sq.image_id
+	          WHERE sq.question_id = q.id ORDER BY sq.id LIMIT 1) AS has_verification_report
+	FROM questions q`
+
 func scanQuestion(row pgx.Row) (*domain.Question, error) {
 	q := &domain.Question{}
 	var choices, answers []byte
@@ -361,4 +447,58 @@ func scanQuestionRow(rows pgx.Rows) (*domain.Question, error) {
 	q.VerifiedAt = verifiedAt
 	q.VerifiedBy = verifiedBy
 	return q, nil
+}
+
+// scanQuestionExpert scans the 15 base question columns + image_id + has_report.
+// Accepts anything with a Scan(...) method (pgx.Row and pgx.Rows both qualify).
+func scanQuestionExpert(row interface {
+	Scan(dest ...any) error
+}) (*storage.QuestionExpertView, error) {
+	var (
+		q                   domain.Question
+		choices, answers    []byte
+		verifiedAt, verBy   *string
+	)
+	var imageID *string
+	var hasReport bool
+	if err := row.Scan(
+		&q.ID, &q.Number, &q.Text, &q.TextNorm, &q.TextHash,
+		&q.MultipleCorrect, &choices, &answers, &q.ChoiceLabeling,
+		&q.Confidence, &q.Explanation, &verifiedAt, &verBy, &q.Status,
+		&imageID, &hasReport,
+	); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(choices, &q.Choices); err != nil {
+		return nil, fmt.Errorf("unmarshal choices: %w", err)
+	}
+	if err := json.Unmarshal(answers, &q.Answers); err != nil {
+		return nil, fmt.Errorf("unmarshal answers: %w", err)
+	}
+	q.VerifiedAt = verifiedAt
+	q.VerifiedBy = verBy
+	ev := &storage.QuestionExpertView{Question: &q, HasVerificationReport: hasReport}
+	if imageID != nil {
+		ev.ImageID = *imageID
+	}
+	return ev, nil
+}
+
+// scanQuestionWithSession scans the 13-column SELECT used by ListForUser and
+// FindForUserByID. Accepts both pgx.Row and pgx.Rows.
+func scanQuestionWithSession(row interface {
+	Scan(dest ...any) error
+}) (*storage.QuestionWithSession, error) {
+	qws := &storage.QuestionWithSession{Question: &domain.Question{}}
+	var choices, answers []byte
+	if err := row.Scan(
+		&qws.ID, &qws.Number, &qws.Text, &qws.MultipleCorrect,
+		&choices, &answers, &qws.ChoiceLabeling, &qws.Confidence, &qws.Status,
+		&qws.SessionID, &qws.ImageID, &qws.ExtractedNumber, &qws.ExtractedConfidence,
+	); err != nil {
+		return nil, err
+	}
+	json.Unmarshal(choices, &qws.Choices)
+	json.Unmarshal(answers, &qws.Answers)
+	return qws, nil
 }

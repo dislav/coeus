@@ -25,6 +25,15 @@ type QuestionWithSession struct {
 	ExtractedConfidence float64
 }
 
+// QuestionExpertView is a question joined with a single representative image link,
+// for the expert moderation UI. The ImageID is the first session_questions row
+// by id (deterministic representative); HasVerificationReport reflects that image.
+type QuestionExpertView struct {
+	*domain.Question
+	ImageID               string
+	HasVerificationReport bool
+}
+
 // UserRepo manages user records.
 type UserRepo interface {
 	Create(ctx context.Context, email, passwordHash, role string) (*User, error)
@@ -62,6 +71,10 @@ type QuestionRepo interface {
 	ListForUser(ctx context.Context, sessionID string, statusFilter string, limit, offset int) ([]*QuestionWithSession, error)
 	ListForModeration(ctx context.Context, statusFilter, tagFilter string, limit, offset int) ([]*domain.Question, error)
 	UpdateByExpert(ctx context.Context, id string, answers []string, choices []string, explanation string, confidence float64, tags []string, expertID string) error
+	// Read-side projections for the HTTP surface.
+	FindExpertByID(ctx context.Context, id string) (*QuestionExpertView, error)
+	ListForModerationExpert(ctx context.Context, statusFilter, tagFilter string, limit, offset int) ([]*QuestionExpertView, error)
+	FindForUserByID(ctx context.Context, questionID, userID string) (*QuestionWithSession, error)
 	CountUnresolvedForImage(ctx context.Context, imageID string) (int, error)
 	LinkToSession(ctx context.Context, sessionID, imageID, questionID string, number int, confidence float64) error
 }

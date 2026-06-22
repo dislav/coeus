@@ -198,6 +198,15 @@ func (r *fakeQuestionRepo) ListForModeration(context.Context, string, string, in
 func (r *fakeQuestionRepo) UpdateByExpert(context.Context, string, []string, []string, string, float64, []string, string) error {
 	return nil
 }
+func (r *fakeQuestionRepo) FindExpertByID(context.Context, string) (*storage.QuestionExpertView, error) {
+	return nil, domain.ErrNotFound
+}
+func (r *fakeQuestionRepo) ListForModerationExpert(context.Context, string, string, int, int) ([]*storage.QuestionExpertView, error) {
+	return nil, nil
+}
+func (r *fakeQuestionRepo) FindForUserByID(context.Context, string, string) (*storage.QuestionWithSession, error) {
+	return nil, domain.ErrNotFound
+}
 func (r *fakeQuestionRepo) CountUnresolvedForImage(context.Context, string) (int, error) { return 0, nil }
 func (r *fakeQuestionRepo) LinkToSession(_ context.Context, sessionID, imageID, questionID string, num int, conf float64) error {
 	r.links = append(r.links, struct{ sessionID, imageID, questionID string; num int; conf float64 }{sessionID, imageID, questionID, num, conf})

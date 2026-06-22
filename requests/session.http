@@ -1,0 +1,25 @@
+### Create
+
+POST http://localhost:8080/api/v1/sessions
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE2MjIyMCwiaWF0IjoxNzgyMTU4NjIwfQ.kViZGPjbCezNI-k1lQ20T0Uj2KXdUY_EDsRLM2jTez4
+Content-Type: application/json
+
+{
+  "duration_seconds": 7200,
+  "buffer_seconds": 1800
+}
+
+### List
+
+GET http://localhost:8080/api/v1/sessions
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE2MjIyMCwiaWF0IjoxNzgyMTU4NjIwfQ.kViZGPjbCezNI-k1lQ20T0Uj2KXdUY_EDsRLM2jTez4
+
+### Detail
+
+GET http://localhost:8080/api/v1/sessions/3c969740-069a-496a-99d7-fbc1269ce821
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE2MjIyMCwiaWF0IjoxNzgyMTU4NjIwfQ.kViZGPjbCezNI-k1lQ20T0Uj2KXdUY_EDsRLM2jTez4
+
+### Close
+
+POST http://localhost:8080/api/v1/sessions/3c969740-069a-496a-99d7-fbc1269ce821/close
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE2MjIyMCwiaWF0IjoxNzgyMTU4NjIwfQ.kViZGPjbCezNI-k1lQ20T0Uj2KXdUY_EDsRLM2jTez4

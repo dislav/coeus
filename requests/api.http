@@ -1,0 +1,7 @@
+### Health
+
+GET http://localhost:8080/healthz
+
+### Ready
+
+GET http://localhost:8080/readyz

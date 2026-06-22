@@ -1,0 +1,26 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+
+# Pre-built binaries (wrong arch for Docker)
+coeus
+
+# Documentation and planning artifacts
+*.md
+docs/
+
+# Agent/skill configuration (not needed at runtime)
+.agents
+.opencode
+skills/
+skills-lock.json
+
+# Docker
+Dockerfile
+.dockerignore
+
+# OS
+.DS_Store

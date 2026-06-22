@@ -53,7 +53,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	jwtMgr := auth.NewJWTManager(cfg.JWT)
 
 	server := httpapi.NewServer(
-		userRepo, sessionRepo, imageRepo, jobQueue,
+		userRepo, sessionRepo, imageRepo, questionRepo, jobQueue,
 		jwtMgr, pool, cfg.Upload,
 	)
 

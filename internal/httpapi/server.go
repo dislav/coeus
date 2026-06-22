@@ -12,20 +12,22 @@ import (
 )
 
 type Server struct {
-	router      *gin.Engine
-	userRepo    storage.UserRepo
-	sessionRepo storage.SessionRepo
-	imageRepo   storage.ImageRepo
-	jobQueue    storage.JobQueue
-	jwtMgr      *auth.JWTManager
-	pool        *pgxpool.Pool
-	uploadCfg   config.UploadConfig
+	router       *gin.Engine
+	userRepo     storage.UserRepo
+	sessionRepo  storage.SessionRepo
+	imageRepo    storage.ImageRepo
+	questionRepo storage.QuestionRepo
+	jobQueue     storage.JobQueue
+	jwtMgr       *auth.JWTManager
+	pool         *pgxpool.Pool
+	uploadCfg    config.UploadConfig
 }
 
 func NewServer(
 	userRepo storage.UserRepo,
 	sessionRepo storage.SessionRepo,
 	imageRepo storage.ImageRepo,
+	questionRepo storage.QuestionRepo,
 	jobQueue storage.JobQueue,
 	jwtMgr *auth.JWTManager,
 	pool *pgxpool.Pool,
@@ -37,8 +39,8 @@ func NewServer(
 
 	s := &Server{
 		router: r, userRepo: userRepo, sessionRepo: sessionRepo,
-		imageRepo: imageRepo, jobQueue: jobQueue, jwtMgr: jwtMgr,
-		pool: pool, uploadCfg: uploadCfg,
+		imageRepo: imageRepo, questionRepo: questionRepo, jobQueue: jobQueue,
+		jwtMgr: jwtMgr, pool: pool, uploadCfg: uploadCfg,
 	}
 	s.registerRoutes()
 	return s
@@ -77,6 +79,24 @@ func (s *Server) registerRoutes() {
 			// Image routes — SessionWindow guards ownership + expiry
 			sessions.POST("/:id/images", SessionWindow(s.sessionRepo), imageHandler.Upload)
 			sessions.GET("/:id/images", SessionWindow(s.sessionRepo), imageHandler.List)
+		}
+
+		// Questions — both roles; behavior splits inside the handler.
+		// PATCH is expert-only via per-route RoleGuard (spec §4.4).
+		questionHandler := handlers.NewQuestionHandler(s.questionRepo, s.sessionRepo)
+		questions := apiGroup.Group("/questions")
+		{
+			questions.GET("", questionHandler.List)
+			questions.GET("/:id", questionHandler.Get)
+			questions.PATCH("/:id", RoleGuard("expert"), questionHandler.Update)
+		}
+
+		// Expert image access — expert only (spec §4.5).
+		expertHandler := handlers.NewExpertHandler(s.imageRepo)
+		expertImages := apiGroup.Group("/images", RoleGuard("expert"))
+		{
+			expertImages.GET("/:id", expertHandler.GetImage)
+			expertImages.GET("/:id/verification-report", expertHandler.GetVerificationReport)
 		}
 	}
 }

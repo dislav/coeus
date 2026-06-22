@@ -138,3 +138,19 @@ func TestValidate_WithSecrets(t *testing.T) {
 		t.Errorf("Validate() error: %v", err)
 	}
 }
+
+func TestValidate_EmbedderOptional(t *testing.T) {
+	t.Setenv("COEUS_POSTGRES_DSN", "postgres://test:test@localhost:5432/coeus?sslmode=disable")
+	t.Setenv("COEUS_JWT_SECRET", "test-secret")
+	t.Setenv("COEUS_AI_VISION_API_KEY", "vision-key")
+	t.Setenv("COEUS_AI_REVIEWER_API_KEY", "reviewer-key")
+	// embedder key intentionally omitted
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() should succeed without embedder key, got: %v", err)
+	}
+}

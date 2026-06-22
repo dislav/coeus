@@ -154,9 +154,8 @@ func (c *Config) Validate() error {
 	if c.AI.Reviewer.APIKey == "" {
 		return fmt.Errorf("ai.reviewer.api_key is required (set COEUS_AI_REVIEWER_API_KEY)")
 	}
-	if c.AI.Embedder.APIKey == "" {
-		return fmt.Errorf("ai.embedder.api_key is required (set COEUS_AI_EMBEDDER_API_KEY)")
-	}
+	// Embedder is optional — when no key is set, the pipeline skips
+	// semantic dedup and stores questions without embeddings.
 	return nil
 }
 

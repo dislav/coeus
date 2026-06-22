@@ -60,7 +60,7 @@ export COEUS_AI_VISION_API_KEY="sk-..."               # Moonshot/Kimi
 export COEUS_AI_VISION_BASE_URL="https://api.moonshot.cn/v1"
 export COEUS_AI_REVIEWER_API_KEY="sk-..."             # DeepSeek
 export COEUS_AI_REVIEWER_BASE_URL="https://api.deepseek.com/v1"
-export COEUS_AI_EMBEDDER_API_KEY="sk-..."             # OpenAI
+export COEUS_AI_EMBEDDER_API_KEY="sk-..."             # OpenAI (optional — see below)
 ```
 
 ### 3. Run
@@ -88,10 +88,26 @@ else has sensible defaults.
 | `COEUS_AI_VISION_BASE_URL` | no | `https://api.moonshot.cn/v1` | Vision model base URL |
 | `COEUS_AI_REVIEWER_API_KEY` | yes | — | DeepSeek API key |
 | `COEUS_AI_REVIEWER_BASE_URL` | no | `https://api.deepseek.com/v1` | Reviewer model base URL |
-| `COEUS_AI_EMBEDDER_API_KEY` | yes | — | OpenAI API key |
+| `COEUS_AI_EMBEDDER_API_KEY` | no | — | Embedder API key. If unset, semantic dedup is skipped (exact-hash dedup still works) |
 | `COEUS_AI_EMBEDDER_BASE_URL` | no | OpenAI default | Embeddings base URL |
 | `COEUS_SERVER_ADDR` | no | `:8080` | HTTP listen address |
 | `COEUS_WORKERS_COUNT` | no | `4` | Pipeline worker count |
+
+> **Embedder is optional.** If `COEUS_AI_EMBEDDER_API_KEY` is unset, the
+> pipeline skips semantic dedup — questions are still stored, just without
+> embedding vectors. Exact-hash dedup continues to work.
+>
+> **Local alternative (free):** [Ollama](https://ollama.ai) exposes an
+> OpenAI-compatible endpoint. Pull a model, point the embedder at it, no code
+> changes:
+> ```bash
+> ollama pull nomic-embed-text
+> ollama serve  # localhost:11434
+> export COEUS_AI_EMBEDDER_BASE_URL="http://localhost:11434/v1"
+> export COEUS_AI_EMBEDDER_API_KEY="ollama"   # dummy key
+> ```
+> Update `ai.embedder.model` to `nomic-embed-text` and `dim` to `768` in
+> `config.yaml` to match.
 
 ### Defaults (config.yaml)
 

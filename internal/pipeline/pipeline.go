@@ -150,12 +150,14 @@ func (p *Pipeline) execute(ctx context.Context, job *domain.Job) error {
 			continue
 		}
 
-		// 4d: Embed (best-effort)
+		// 4d: Embed (best-effort, skipped if embedder is not configured)
 		var embedding []float32
-		if emb, err := p.embedder.Embed(ctx, eq.Text); err != nil {
-			p.log.Warn("embed failed, skipping semantic dedup", "image", img.ID, "error", err)
-		} else {
-			embedding = emb
+		if p.embedder != nil {
+			if emb, err := p.embedder.Embed(ctx, eq.Text); err != nil {
+				p.log.Warn("embed failed, skipping semantic dedup", "image", img.ID, "error", err)
+			} else {
+				embedding = emb
+			}
 		}
 
 		// 4e: Semantic dedup (only if embedding succeeded)

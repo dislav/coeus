@@ -62,7 +62,15 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	enh := enhancer.New(log)
 	ext := extractor.New(cfg.AI.Vision, log)
 	ver := verifier.New(cfg.AI.Reviewer, log)
-	emb := embedder.New(cfg.AI.Embedder, log)
+
+	// Embedder is optional — skip when no API key is configured.
+	var emb pipeline.AIEmbedder
+	if cfg.AI.Embedder.APIKey != "" {
+		emb = embedder.New(cfg.AI.Embedder, log)
+		log.Info("embedder enabled", "model", cfg.AI.Embedder.Model)
+	} else {
+		log.Info("embedder disabled — semantic dedup skipped (set COEUS_AI_EMBEDDER_API_KEY to enable)")
+	}
 
 	pip := pipeline.NewPipeline(imageRepo, questionRepo, jobQueue,
 		enh, ext, ver, emb, cfg.Pipeline, log)

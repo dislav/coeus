@@ -240,7 +240,65 @@ docs/
 skills/                 AI prompt definitions for extraction & verification
 ```
 
-## Testing
+## Development
+
+### Local Database
+
+Spin up PostgreSQL with pgvector for development:
+
+```bash
+docker run --rm -d --name coeus-db \
+  -p 5432:5432 \
+  -e POSTGRES_DB=coeus \
+  -e POSTGRES_PASSWORD=dev \
+  pgvector/pgvector:pg16
+
+export COEUS_POSTGRES_DSN="postgres://postgres:dev@localhost:5432/coeus?sslmode=disable"
+```
+
+Migrations run automatically on app startup — no manual setup needed.
+
+### Environment File
+
+Create a `.env` file (not committed) for local development:
+
+```bash
+cat > .env <<'EOF'
+COEUS_POSTGRES_DSN=postgres://postgres:dev@localhost:5432/coeus?sslmode=disable
+COEUS_JWT_SECRET=dev-secret-not-for-production
+COEUS_AI_VISION_API_KEY=sk-...
+COEUS_AI_VISION_BASE_URL=https://api.moonshot.cn/v1
+COEUS_AI_REVIEWER_API_KEY=sk-...
+COEUS_AI_REVIEWER_BASE_URL=https://api.deepseek.com/v1
+COEUS_AI_EMBEDDER_API_KEY=sk-...
+EOF
+```
+
+Load it with [`direnv`](https://direnv.net/) (`direnv allow`) or source manually:
+
+```bash
+set -a; source .env; set +a
+```
+
+### Running the Server
+
+**One-shot** (recompiles from scratch each time):
+
+```bash
+go run ./cmd/coeus
+```
+
+**Hot-reload** with [air](https://github.com/air-verse/air) — recompiles only
+on file changes, restarts instantly:
+
+```bash
+go install github.com/air-verse/air@latest
+air
+```
+
+First compile takes ~5s (CGO + libvips). Subsequent restarts are near-instant.
+
+### Testing
 
 ```bash
 # Unit tests (no external dependencies)
@@ -249,10 +307,98 @@ go test -short ./...
 # Integration tests (requires Docker for Testcontainers)
 go test ./internal/storage/postgres/ ./internal/pipeline/ -timeout 180s
 
+# Single package
+go test ./internal/ai/extractor/ -v
+
 # Build + vet
 go build ./...
 go vet ./...
 ```
+
+### Debugging
+
+Run with Delve:
+
+```bash
+go install github.com/go-delve/delve/cmd/dlv@latest
+dlv debug ./cmd/coeus
+```
+
+Connect from VS Code or IntelliJ at `localhost:2345`.
+
+## Production
+
+### Docker (recommended)
+
+Build and run the multi-stage image (see `Dockerfile`):
+
+```bash
+docker build -t coeus .
+
+docker run --rm -d \
+  --name coeus \
+  -p 8080:8080 \
+  -e COEUS_POSTGRES_DSN="postgres://user:pass@db-host:5432/coeus?sslmode=disable" \
+  -e COEUS_JWT_SECRET="$(openssl rand -hex 32)" \
+  -e COEUS_AI_VISION_API_KEY="sk-..." \
+  -e COEUS_AI_REVIEWER_API_KEY="sk-..." \
+  -e COEUS_AI_EMBEDDER_API_KEY="sk-..." \
+  coeus
+```
+
+The image includes a health check against `/healthz` (10s interval, 3 retries).
+
+Verify:
+
+```bash
+curl localhost:8080/healthz   # {"status":"ok"}
+curl localhost:8080/readyz    # {"status":"ready"}  (pings DB)
+```
+
+### Binary (without Docker)
+
+Build a stripped binary:
+
+```bash
+CGO_ENABLED=1 go build -ldflags='-s -w' -trimpath -o coeus ./cmd/coeus
+```
+
+The binary requires `libvips` shared libraries at runtime. On a Linux server:
+
+```bash
+sudo apt install libvips42
+./coeus
+```
+
+Run under a process manager (systemd, supervisor) with env vars sourced from a
+secrets manager or a restricted-permission environment file:
+
+```ini
+# /etc/systemd/system/coeus.service
+[Unit]
+Description=Coeus
+After=network.target postgresql.service
+
+[Service]
+ExecStart=/usr/local/bin/coeus
+EnvironmentFile=/etc/coeus/env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Production Checklist
+
+- [ ] JWT secret is a random 32+ byte string (not a short password)
+- [ ] PostgreSQL has pgvector extension enabled
+- [ ] `COEUS_POSTGRES_DSN` points to a persistent database (not a dev container)
+- [ ] AI API keys are provisioned with appropriate rate limits
+- [ ] `COEUS_WORKERS_COUNT` tuned to match CPU cores and DB connection pool
+  (`postgres.max_conns` defaults to 20; each worker may hold a connection)
+- [ ] Reverse proxy (nginx, Caddy) in front for TLS termination
+- [ ] `upload.max_bytes` (10 MB default) fits your use case
 
 ## Graceful Shutdown
 

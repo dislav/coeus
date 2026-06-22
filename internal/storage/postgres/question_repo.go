@@ -325,6 +325,11 @@ func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, answers, c
 // 'moderation' or 'error'. Runs inside the caller's tx so it is atomic with
 // the status flip. (CountUnresolvedForImage uses r.pool and can't be reused
 // here; the count SQL is inlined tx-scoped.)
+//
+// Best-effort under READ COMMITTED: two concurrent expert PATCHes on different
+// questions sharing the same image may both see the other's question still
+// unresolved and both skip the byte null (benign — bytes retained until a
+// later resolution touches the image; no correctness/visibility impact).
 func cleanupImageBytesTx(ctx context.Context, tx pgx.Tx, questionID string) error {
 	rows, err := tx.Query(ctx,
 		`SELECT DISTINCT sq.image_id FROM session_questions sq WHERE sq.question_id = $1`,
@@ -332,16 +337,16 @@ func cleanupImageBytesTx(ctx context.Context, tx pgx.Tx, questionID string) erro
 	if err != nil {
 		return fmt.Errorf("select linked images: %w", err)
 	}
+	defer rows.Close()
+
 	var imageIDs []string
 	for rows.Next() {
 		var imgID string
 		if err := rows.Scan(&imgID); err != nil {
-			rows.Close()
 			return fmt.Errorf("scan image id: %w", err)
 		}
 		imageIDs = append(imageIDs, imgID)
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate linked images: %w", err)
 	}

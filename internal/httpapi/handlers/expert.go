@@ -63,7 +63,7 @@ func (h *ExpertHandler) GetVerificationReport(c *gin.Context) {
 		return
 	}
 	if img.VerificationReport == nil {
-		c.JSON(http.StatusOK, nil) // renders "null"
+		c.Data(http.StatusOK, "application/json", []byte("null"))
 		return
 	}
 	c.Data(http.StatusOK, "application/json", img.VerificationReport)

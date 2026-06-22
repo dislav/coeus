@@ -129,6 +129,17 @@ func TestGetVerificationReport_NullWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestGetVerificationReport_RepoError500(t *testing.T) {
+	imgs := &fakeImageRepo{byID: func(string) (*domain.Image, error) {
+		return nil, errors.New("boom")
+	}}
+	r := newExpertRouter(imgs)
+	w := doReq(t, r, "GET", "/api/v1/images/i1/verification-report", "")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("got %d want 500", w.Code)
+	}
+}
+
 func TestGetVerificationReport_ImageNotFound404(t *testing.T) {
 	imgs := &fakeImageRepo{byID: func(string) (*domain.Image, error) {
 		return nil, domain.ErrNotFound

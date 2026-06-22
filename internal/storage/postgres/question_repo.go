@@ -309,8 +309,58 @@ func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, answers, c
 		}
 	}
 
+	// --- Image-byte cleanup (spec §3.5), same transaction as the status flip ---
+	if err := cleanupImageBytesTx(ctx, tx, id); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit update by expert: %w", err)
+	}
+	return nil
+}
+
+// cleanupImageBytesTx nulls out original+enhanced bytes for every image linked
+// to the patched question that no longer has any sibling question in
+// 'moderation' or 'error'. Runs inside the caller's tx so it is atomic with
+// the status flip. (CountUnresolvedForImage uses r.pool and can't be reused
+// here; the count SQL is inlined tx-scoped.)
+func cleanupImageBytesTx(ctx context.Context, tx pgx.Tx, questionID string) error {
+	rows, err := tx.Query(ctx,
+		`SELECT DISTINCT sq.image_id FROM session_questions sq WHERE sq.question_id = $1`,
+		questionID)
+	if err != nil {
+		return fmt.Errorf("select linked images: %w", err)
+	}
+	var imageIDs []string
+	for rows.Next() {
+		var imgID string
+		if err := rows.Scan(&imgID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan image id: %w", err)
+		}
+		imageIDs = append(imageIDs, imgID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate linked images: %w", err)
+	}
+
+	for _, imgID := range imageIDs {
+		var unresolved int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM session_questions sq
+			JOIN questions q ON q.id = sq.question_id
+			WHERE sq.image_id = $1 AND q.status IN ('moderation', 'error')
+		`, imgID).Scan(&unresolved); err != nil {
+			return fmt.Errorf("count unresolved for image %s: %w", imgID, err)
+		}
+		if unresolved == 0 {
+			if _, err := tx.Exec(ctx,
+				`UPDATE images SET original = NULL, enhanced = NULL WHERE id = $1`, imgID); err != nil {
+				return fmt.Errorf("clean image bytes %s: %w", imgID, err)
+			}
+		}
 	}
 	return nil
 }

@@ -163,6 +163,15 @@ upload:
 ## API
 
 All endpoints except `/healthz`, `/readyz`, and auth are behind JWT auth.
+Accounts have one of two roles:
+
+- **`user`** — starts sessions, uploads images, and reads their own answers
+  (the default role assigned on registration)
+- **`expert`** — moderates the question queue and verifies answers
+  (provisioned out-of-band; there is no public expert registration)
+
+The `/questions` endpoints serve both roles with different behavior; the expert
+image-access endpoints and `PATCH /questions/:id` are expert-only.
 
 ### Health
 
@@ -198,6 +207,105 @@ past the session duration to allow in-flight jobs to finish.
 | POST | `/api/v1/sessions/:id/images` | Upload exam image (JPEG/PNG/WebP, max 10 MB) |
 | GET | `/api/v1/sessions/:id/images` | List images with pipeline job status |
 
+### Questions
+
+The `/questions` endpoints serve both roles — behavior splits by the caller's
+role.
+
+**User** — read answers within an open session:
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/questions?session_id=...` | List answers in a session owned by the caller. Optional `status`, `page`, `per_page`. Requires an open, unexpired session (410 otherwise) |
+| GET | `/api/v1/questions/:id` | One answer, only if linked to the caller's session (404 otherwise) |
+
+User response shape — no `explanation`; answer ids are derived at read time
+from the value's index in `choices`:
+
+```json
+{
+  "id": "uuid",
+  "number": 1,
+  "question": "Укажите, какие из данных формул соответствуют кислотам:",
+  "multiple_correct": true,
+  "choices": ["Fe(OH)₂","Cs₂O","HBr","Na₂CO₃","H₂SO₄"],
+  "answers": [{"id":"C","value":"HBr"},{"id":"E","value":"H₂SO₄"}],
+  "status": "moderation",
+  "confidence": 0.85
+}
+```
+
+**Expert** — moderation queue and verification:
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/questions` | Moderation queue. Optional `status=moderation\|error` (default `moderation`), `tag`, `page`, `per_page` |
+| GET | `/api/v1/questions/:id` | Any question with full context (explanation, tags, image link) |
+| PATCH | `/api/v1/questions/:id` | **Expert only** (`user` → 403). Promote to `verified` |
+
+PATCH body (overwrites the question in place; `answers`/`choices`/`explanation`/`tags`/`confidence` are all optional):
+
+```json
+{
+  "status": "verified",
+  "answers": ["HBr","H₂SO₄"],
+  "choices": ["Fe(OH)₂","Cs₂O","HBr","Na₂CO₃","H₂SO₄"],
+  "explanation": "...",
+  "tags": ["chemistry"],
+  "confidence": 0.95
+}
+```
+
+Expert response shape — full fields; answers stored value-only (display ids
+are a user-side concern):
+
+```json
+{
+  "id": "uuid",
+  "number": 1,
+  "question": "...",
+  "multiple_correct": true,
+  "choices": ["..."],
+  "answers": ["HBr","H₂SO₄"],
+  "choice_labeling": "letter",
+  "confidence": 0.85,
+  "explanation": "... [VERIFICATION FLAG] ...",
+  "tags": ["ai-generated","chemistry"],
+  "status": "moderation",
+  "image_id": "uuid",
+  "has_verification_report": true,
+  "verified_at": null,
+  "verified_by": null
+}
+```
+
+### Answer lifecycle
+
+Each extracted question enters the store at `moderation`. An expert reviews it
+(with the source image and the DeepSeek verification report for context) and
+`PATCH`es it to `verified`, after which future matches reuse the canonical
+answer.
+
+| `status` | Meaning |
+|---|---|
+| `moderation` | AI-extracted answer awaiting expert review |
+| `verified` | Expert-confirmed; terminal |
+| `error` | The image was unreadable after extraction retries; a placeholder awaiting manual expert entry |
+
+When an expert verifies the **last** `moderation`/`error` question linked to an
+image, that image's `original` + `enhanced` bytes are set to `NULL` in the same
+transaction (the `images` row and all metadata are retained). This is why
+`GET /images/:id` returns `404` for already-reviewed images.
+
+### Expert Image Access
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/images/:id` | Serve the original image bytes (`Content-Type` = stored MIME). `404` once bytes have been cleaned |
+| GET | `/api/v1/images/:id/verification-report` | DeepSeek verification report JSON (`null` if absent, `404` if the image is missing) |
+
+Both are **expert only**.
+
 ### Example: End-to-end flow
 
 ```bash
@@ -227,6 +335,33 @@ curl -s localhost:8080/api/v1/sessions/$SID/images \
 # 5. Check job status
 curl -s localhost:8080/api/v1/sessions/$SID/images \
   -H "Authorization: Bearer $TOKEN" | jq
+
+# 6. Fetch extracted answers (session must still be open — 410 once it expires)
+curl -s "localhost:8080/api/v1/questions?session_id=$SID" \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+### Example: Expert moderation
+
+```bash
+# Using an expert JWT (expert accounts are provisioned out-of-band)
+
+# 1. Pull the moderation queue
+curl -s "localhost:8080/api/v1/questions?status=moderation" \
+  -H "Authorization: Bearer $EXPERT_TOKEN" | jq
+
+# 2. Review the source image and verification report before deciding
+#    (QID / IID taken from a queue entry's id / image_id)
+curl -s localhost:8080/api/v1/images/$IID -o question.png
+curl -s localhost:8080/api/v1/images/$IID/verification-report | jq
+
+# 3. Verify the answer. Image bytes are cleaned automatically once the last
+#    moderation/error question linked to that image is resolved.
+curl -s localhost:8080/api/v1/questions/$QID \
+  -H "Authorization: Bearer $EXPERT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -X PATCH \
+  -d '{"status":"verified","answers":["HBr","H₂SO₄"],"confidence":0.95}' | jq
 ```
 
 ## Project Structure

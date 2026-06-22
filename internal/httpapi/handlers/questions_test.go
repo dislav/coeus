@@ -292,3 +292,67 @@ func TestUpdate_ExpertRepoError500(t *testing.T) {
 		t.Fatalf("got %d want 500", w.Code)
 	}
 }
+
+func TestGet_ExpertNotFound404(t *testing.T) {
+	q := &fakeQuestionRepo{expertByID: func(string) (*storage.QuestionExpertView, error) {
+		return nil, domain.ErrNotFound
+	}}
+	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
+	w := doReq(t, r, "GET", "/api/v1/questions/q1", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d want 404", w.Code)
+	}
+}
+
+func TestGet_ExpertRepoError500(t *testing.T) {
+	q := &fakeQuestionRepo{expertByID: func(string) (*storage.QuestionExpertView, error) {
+		return nil, errors.New("boom")
+	}}
+	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
+	w := doReq(t, r, "GET", "/api/v1/questions/q1", "")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("got %d want 500", w.Code)
+	}
+}
+
+func TestUpdate_ReFetchFallbackReturnsPartialBody(t *testing.T) {
+	q := &fakeQuestionRepo{
+		updateByExpert: func(string, []string, []string, string, float64, []string, string) error {
+			return nil
+		},
+		expertByID: func(string) (*storage.QuestionExpertView, error) {
+			return nil, errors.New("refetch failed")
+		},
+	}
+	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
+	w := doReq(t, r, "PATCH", "/api/v1/questions/q1", `{"status":"verified","answers":["X"],"choices":["X"]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d want 200", w.Code)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["id"] != "q1" || body["status"] != "verified" {
+		t.Fatalf("unexpected partial body: %s", w.Body.String())
+	}
+}
+
+func TestList_ExpertPagingBoundsResetToDefault(t *testing.T) {
+	var gotLimit int
+	q := &fakeQuestionRepo{
+		listModeration: func(status, tag string, limit, off int) ([]*storage.QuestionExpertView, error) {
+			gotLimit = limit
+			return nil, nil
+		},
+	}
+	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
+
+	_ = doReq(t, r, "GET", "/api/v1/questions?per_page=999", "")
+	if gotLimit != 20 {
+		t.Fatalf("per_page=999: got limit %d want 20", gotLimit)
+	}
+
+	_ = doReq(t, r, "GET", "/api/v1/questions?per_page=0", "")
+	if gotLimit != 20 {
+		t.Fatalf("per_page=0: got limit %d want 20", gotLimit)
+	}
+}

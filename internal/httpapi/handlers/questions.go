@@ -111,7 +111,15 @@ func (h *QuestionHandler) Get(c *gin.Context) {
 	if role == roleExpert {
 		ev, err := h.questions.FindExpertByID(c.Request.Context(), id)
 		if err != nil {
-			c.JSON(http.StatusNotFound, errorResponse(domain.ErrNotFound))
+			if errors.Is(err, domain.ErrNotFound) {
+				c.JSON(http.StatusNotFound, errorResponse(domain.ErrNotFound))
+				return
+			}
+			slog.Error("find expert question failed",
+				"question_id", id,
+				"request_id", c.GetString("request_id"),
+				"err", err)
+			c.JSON(http.StatusInternalServerError, errorResponse(err))
 			return
 		}
 		c.JSON(http.StatusOK, toExpertResponse(ev))
@@ -171,6 +179,9 @@ func (h *QuestionHandler) Update(c *gin.Context) {
 	// Re-fetch the updated expert view for the response (Decision #4).
 	ev, err := h.questions.FindExpertByID(c.Request.Context(), id)
 	if err != nil {
+		slog.Warn("re-fetch after expert update failed, returning partial body",
+			"question_id", id,
+			"err", err)
 		c.JSON(http.StatusOK, gin.H{"id": id, "status": domain.QuestionStatusVerified})
 		return
 	}

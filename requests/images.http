@@ -1,17 +1,10 @@
-### Upload
+### Detail
 
-POST http://localhost:8080/api/v1/sessions/3c969740-069a-496a-99d7-fbc1269ce821/images
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE2MjIyMCwiaWF0IjoxNzgyMTU4NjIwfQ.kViZGPjbCezNI-k1lQ20T0Uj2KXdUY_EDsRLM2jTez4
-Content-Type: multipart/form-data; boundary=boundary
+GET http://localhost:8080/api/v1/images/da4a95c3-3062-4e69-8f44-4585bc2a34a1
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE3NTQ4NywiaWF0IjoxNzgyMTcxODg3fQ.h7FLYChOXYAmcN87751ufTgmBHOEuPhsk88LRnFWxmg
 
---boundary
-Content-Disposition: form-data; name="image"; filename="test2.jpeg"
-Content-Type: image/jpeg
 
-< ./images/test2.jpeg
---boundary--
+### Report
 
-### Download
-
-GET http://localhost:8080/api/v1/sessions/3c969740-069a-496a-99d7-fbc1269ce821/images
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE2MjIyMCwiaWF0IjoxNzgyMTU4NjIwfQ.kViZGPjbCezNI-k1lQ20T0Uj2KXdUY_EDsRLM2jTez4
+GET http://localhost:8080/api/v1/images/da4a95c3-3062-4e69-8f44-4585bc2a34a1/verification-report
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE3NTQ4NywiaWF0IjoxNzgyMTcxODg3fQ.h7FLYChOXYAmcN87751ufTgmBHOEuPhsk88LRnFWxmg

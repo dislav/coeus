@@ -1,0 +1,14 @@
+### [User] List
+
+GET http://localhost:8080/api/v1/questions?session_id=2322a28a-4d8e-4dde-8af1-13705d0d9126
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE3NTQ4NywiaWF0IjoxNzgyMTcxODg3fQ.h7FLYChOXYAmcN87751ufTgmBHOEuPhsk88LRnFWxmg
+
+### [User] Detail
+
+GET http://localhost:8080/api/v1/questions/8e1054a1-6bd9-4b36-b254-d5bf32d47158
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE3NTQ4NywiaWF0IjoxNzgyMTcxODg3fQ.h7FLYChOXYAmcN87751ufTgmBHOEuPhsk88LRnFWxmg
+
+### [Expert] List
+
+GET http://localhost:8080/api/v1/questions
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE3NTQ4NywiaWF0IjoxNzgyMTcxODg3fQ.h7FLYChOXYAmcN87751ufTgmBHOEuPhsk88LRnFWxmg

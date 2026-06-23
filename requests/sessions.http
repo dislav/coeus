@@ -1,0 +1,43 @@
+### Create
+
+POST http://localhost:8080/api/v1/sessions
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE3NTQ4NywiaWF0IjoxNzgyMTcxODg3fQ.h7FLYChOXYAmcN87751ufTgmBHOEuPhsk88LRnFWxmg
+Content-Type: application/json
+
+{
+  "duration_seconds": 7200,
+  "buffer_seconds": 1800
+}
+
+### List
+
+GET http://localhost:8080/api/v1/sessions
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE3NTQ4NywiaWF0IjoxNzgyMTcxODg3fQ.h7FLYChOXYAmcN87751ufTgmBHOEuPhsk88LRnFWxmg
+
+### Detail
+
+GET http://localhost:8080/api/v1/sessions/2322a28a-4d8e-4dde-8af1-13705d0d9126
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE3NTQ4NywiaWF0IjoxNzgyMTcxODg3fQ.h7FLYChOXYAmcN87751ufTgmBHOEuPhsk88LRnFWxmg
+
+### Close
+
+POST http://localhost:8080/api/v1/sessions/2322a28a-4d8e-4dde-8af1-13705d0d9126/close
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE3NTQ4NywiaWF0IjoxNzgyMTcxODg3fQ.h7FLYChOXYAmcN87751ufTgmBHOEuPhsk88LRnFWxmg
+
+### Upload
+
+POST http://localhost:8080/api/v1/sessions/2322a28a-4d8e-4dde-8af1-13705d0d9126/images
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE3NTQ4NywiaWF0IjoxNzgyMTcxODg3fQ.h7FLYChOXYAmcN87751ufTgmBHOEuPhsk88LRnFWxmg
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="image"; filename="test.jpeg"
+Content-Type: image/jpeg
+
+< ./images/test.jpeg
+--boundary--
+
+### Download
+
+GET http://localhost:8080/api/v1/sessions/2322a28a-4d8e-4dde-8af1-13705d0d9126/images
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxYjE5MmU3Ny02ZGNmLTQxOTQtODA0MS0wNWE4OTQ1ZDE5NjYiLCJyb2xlIjoidXNlciIsImV4cCI6MTc4MjE3NTQ4NywiaWF0IjoxNzgyMTcxODg3fQ.h7FLYChOXYAmcN87751ufTgmBHOEuPhsk88LRnFWxmg

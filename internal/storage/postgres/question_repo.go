@@ -36,12 +36,13 @@ func (r *QuestionRepo) Create(ctx context.Context, q *domain.Question) (string, 
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO questions (number, question, question_normalized, question_hash,
 		    multiple_correct, choices, answers, choice_labeling, confidence,
-		    explanation, embedding, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		    explanation, embedding, status, verified_at, verified_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id
 	`, q.Number, q.Text, q.TextNorm, q.TextHash,
 		q.MultipleCorrect, choicesJSON, answersJSON, q.ChoiceLabeling,
 		q.Confidence, q.Explanation, embedding, q.Status,
+		q.VerifiedAt, q.VerifiedBy,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("create question: %w", err)

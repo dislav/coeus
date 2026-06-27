@@ -242,8 +242,8 @@ func (h *QuestionHandler) Create(c *gin.Context) {
 	if h.embedder != nil {
 		emb, embErr := h.embedder.Embed(c.Request.Context(), req.Question)
 		if embErr != nil {
-		slog.Error("manual question embedder failed",
-			"request_id", c.GetString("request_id"), "err", embErr)
+			slog.Error("manual question embedder failed",
+				"request_id", c.GetString("request_id"), "err", embErr)
 		} else {
 			embedding = emb
 		}

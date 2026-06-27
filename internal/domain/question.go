@@ -1,6 +1,9 @@
 package domain
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -52,4 +55,19 @@ func InferChoiceLabeling(ids []string) string {
 		return ChoiceLabelingLetter
 	}
 	return ChoiceLabelingLetter
+}
+
+// NormalizeQuestion folds a question string to a canonical form for dedup:
+// trim, lowercase, collapse all runs of whitespace to single spaces.
+// It is byte-for-byte identical to the former pipeline.normalizeQuestion —
+// do NOT add punctuation stripping, it would invalidate stored hashes.
+func NormalizeQuestion(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(s))), " ")
+}
+
+// HashQuestion returns the lowercase hex sha256 of the (already-normalized)
+// question text. Used for exact-hash dedup against the questions.question_hash column.
+func HashQuestion(norm string) string {
+	h := sha256.Sum256([]byte(norm))
+	return hex.EncodeToString(h[:])
 }

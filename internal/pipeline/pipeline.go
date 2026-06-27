@@ -2,12 +2,9 @@ package pipeline
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/vlgrigoriev/coeus/internal/config"
 	"github.com/vlgrigoriev/coeus/internal/domain"
@@ -135,8 +132,8 @@ func (p *Pipeline) execute(ctx context.Context, job *domain.Job) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		norm := normalizeQuestion(eq.Text)
-		hash := sha256String(norm)
+		norm := domain.NormalizeQuestion(eq.Text)
+		hash := domain.HashQuestion(norm)
 
 		// 4c: Exact dedup
 		existing, err := p.questions.FindExact(ctx, hash)
@@ -268,7 +265,7 @@ func (p *Pipeline) handleExtractionFailure(ctx context.Context, job *domain.Job,
 		p.log.Error("store extraction error", "image", img.ID, "error", err)
 	}
 
-	hash := sha256String("error:" + img.ID)
+	hash := domain.HashQuestion("error:" + img.ID)
 	q := &domain.Question{
 		Number:   0,
 		Text:     "Extraction failed: " + code,
@@ -285,15 +282,6 @@ func (p *Pipeline) handleExtractionFailure(ctx context.Context, job *domain.Job,
 	if err := p.questions.LinkToSession(ctx, job.SessionID, job.ImageID, id, 0, 0); err != nil {
 		p.log.Error("link error placeholder", "image", img.ID, "error", err)
 	}
-}
-
-func normalizeQuestion(s string) string {
-	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(s))), " ")
-}
-
-func sha256String(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(h[:])
 }
 
 func answerTexts(answers []Answer) []string {

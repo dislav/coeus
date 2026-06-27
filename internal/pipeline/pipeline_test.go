@@ -303,8 +303,8 @@ func TestPipeline_HappyPath(t *testing.T) {
 func TestPipeline_ExactDedupSkipsVerify(t *testing.T) {
 	// Pre-seed an exact-dedup match for question 1's hash
 	qRepo := newFakeQuestionRepo()
-	norm := normalizeQuestion("What is 2+2?")
-	hash := sha256String(norm)
+	norm := domain.NormalizeQuestion("What is 2+2?")
+	hash := domain.HashQuestion(norm)
 	existing := &domain.Question{ID: "existing-1", TextHash: hash}
 	qRepo.byHash[hash] = existing
 

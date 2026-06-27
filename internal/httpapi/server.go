@@ -8,6 +8,7 @@ import (
 	"github.com/vlgrigoriev/coeus/internal/auth"
 	"github.com/vlgrigoriev/coeus/internal/config"
 	"github.com/vlgrigoriev/coeus/internal/httpapi/handlers"
+	"github.com/vlgrigoriev/coeus/internal/pipeline"
 	"github.com/vlgrigoriev/coeus/internal/storage"
 )
 
@@ -21,6 +22,7 @@ type Server struct {
 	jwtMgr       *auth.JWTManager
 	pool         *pgxpool.Pool
 	uploadCfg    config.UploadConfig
+	embedder     pipeline.AIEmbedder
 }
 
 func NewServer(
@@ -32,6 +34,7 @@ func NewServer(
 	jwtMgr *auth.JWTManager,
 	pool *pgxpool.Pool,
 	uploadCfg config.UploadConfig,
+	embedder pipeline.AIEmbedder,
 ) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -40,7 +43,7 @@ func NewServer(
 	s := &Server{
 		router: r, userRepo: userRepo, sessionRepo: sessionRepo,
 		imageRepo: imageRepo, questionRepo: questionRepo, jobQueue: jobQueue,
-		jwtMgr: jwtMgr, pool: pool, uploadCfg: uploadCfg,
+		jwtMgr: jwtMgr, pool: pool, uploadCfg: uploadCfg, embedder: embedder,
 	}
 	s.registerRoutes()
 	return s
@@ -83,7 +86,7 @@ func (s *Server) registerRoutes() {
 
 		// Questions — both roles; behavior splits inside the handler.
 		// POST and PATCH are expert-only via per-route RoleGuard (spec §4.4).
-		questionHandler := handlers.NewQuestionHandler(s.questionRepo, s.sessionRepo, nil)
+		questionHandler := handlers.NewQuestionHandler(s.questionRepo, s.sessionRepo, s.embedder)
 		questions := apiGroup.Group("/questions")
 		{
 			questions.GET("", questionHandler.List)

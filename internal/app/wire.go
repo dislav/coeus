@@ -52,17 +52,6 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	jobQueue := postgres.NewJobQueue(pool)
 	jwtMgr := auth.NewJWTManager(cfg.JWT)
 
-	server := httpapi.NewServer(
-		userRepo, sessionRepo, imageRepo, questionRepo, jobQueue,
-		jwtMgr, pool, cfg.Upload,
-	)
-
-	vips.Startup(nil)
-
-	enh := enhancer.New(log)
-	ext := extractor.New(cfg.AI.Vision, log)
-	ver := verifier.New(cfg.AI.Reviewer, log)
-
 	// Embedder is optional — skip when no API key is configured.
 	var emb pipeline.AIEmbedder
 	if cfg.AI.Embedder.APIKey != "" {
@@ -71,6 +60,17 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 	} else {
 		log.Info("embedder disabled — semantic dedup skipped (set COEUS_AI_EMBEDDER_API_KEY to enable)")
 	}
+
+	server := httpapi.NewServer(
+		userRepo, sessionRepo, imageRepo, questionRepo, jobQueue,
+		jwtMgr, pool, cfg.Upload, emb,
+	)
+
+	vips.Startup(nil)
+
+	enh := enhancer.New(log)
+	ext := extractor.New(cfg.AI.Vision, log)
+	ver := verifier.New(cfg.AI.Reviewer, log)
 
 	pip := pipeline.NewPipeline(imageRepo, questionRepo, jobQueue,
 		enh, ext, ver, emb, cfg.Pipeline, log)

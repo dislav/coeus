@@ -29,6 +29,19 @@ type ServerConfig struct {
 	ReadTimeout     time.Duration `yaml:"read_timeout"`
 	WriteTimeout    time.Duration `yaml:"write_timeout"`
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
+	CORS            CORSConfig    `yaml:"cors"`
+}
+
+// CORSConfig configures the gin-contrib/cors middleware (spec §4.2).
+// Only AllowedOrigins and AllowCredentials get env overrides; the rest are
+// stable enough to live in config.yaml.
+type CORSConfig struct {
+	AllowedOrigins   []string      `yaml:"allowed_origins"`
+	AllowedMethods   []string      `yaml:"allowed_methods"`
+	AllowedHeaders   []string      `yaml:"allowed_headers"`
+	ExposeHeaders    []string      `yaml:"expose_headers"`
+	AllowCredentials bool          `yaml:"allow_credentials"`
+	MaxAge           time.Duration `yaml:"max_age"`
 }
 
 type PostgresConfig struct {
@@ -135,6 +148,28 @@ func applyEnvOverrides(cfg *Config) error {
 		}
 		cfg.Workers.Count = n
 	}
+	if v := os.Getenv("COEUS_CORS_ALLOWED_ORIGINS"); v != "" {
+		parts := strings.Split(v, ",")
+		origins := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				origins = append(origins, t)
+			}
+		}
+		if len(origins) > 0 {
+			cfg.Server.CORS.AllowedOrigins = origins
+		}
+	}
+	if v := os.Getenv("COEUS_CORS_ALLOW_CREDENTIALS"); v != "" {
+		switch strings.ToLower(v) {
+		case "true", "1":
+			cfg.Server.CORS.AllowCredentials = true
+		case "false", "0":
+			cfg.Server.CORS.AllowCredentials = false
+		default:
+			return fmt.Errorf("invalid COEUS_CORS_ALLOW_CREDENTIALS %q: expected true|false|1|0", v)
+		}
+	}
 	return nil
 }
 
@@ -153,6 +188,13 @@ func (c *Config) Validate() error {
 	}
 	if c.AI.Reviewer.APIKey == "" {
 		return fmt.Errorf("ai.reviewer.api_key is required (set COEUS_AI_REVIEWER_API_KEY)")
+	}
+	if c.Server.CORS.AllowCredentials {
+		for _, o := range c.Server.CORS.AllowedOrigins {
+			if o == "*" {
+				return fmt.Errorf("server.cors: allow_credentials cannot be combined with wildcard origin \"*\" (set COEUS_CORS_ALLOWED_ORIGINS to specific origins)")
+			}
+		}
 	}
 	// Embedder is optional — when no key is set, the pipeline skips
 	// semantic dedup and stores questions without embeddings.

@@ -3,6 +3,13 @@ server:
   read_timeout: 15s
   write_timeout: 120s
   shutdown_timeout: 30s
+  cors:
+    allowed_origins: ["*"]
+    allowed_methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
+    allowed_headers: ["Authorization", "Content-Type", "X-Request-Id"]
+    expose_headers: ["X-Request-Id"]
+    allow_credentials: false
+    max_age: 12h
 
 postgres:
   max_conns: 20

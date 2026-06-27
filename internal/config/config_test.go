@@ -154,3 +154,106 @@ func TestValidate_EmbedderOptional(t *testing.T) {
 		t.Errorf("Validate() should succeed without embedder key, got: %v", err)
 	}
 }
+
+func TestValidate_RejectsWildcardWithCredentials(t *testing.T) {
+	cfg := &Config{
+		Postgres: PostgresConfig{DSN: "x"},
+		JWT:      JWTConfig{Secret: "x"},
+		AI: AIConfig{
+			Vision:   VisionConfig{APIKey: "x"},
+			Reviewer: ReviewerConfig{APIKey: "x"},
+		},
+		Server: ServerConfig{CORS: CORSConfig{
+			AllowedOrigins:   []string{"*"},
+			AllowCredentials: true,
+		}},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate: wildcard origin + allow_credentials must error")
+	}
+	if !strings.Contains(err.Error(), "cors") && !strings.Contains(err.Error(), "wildcard") {
+		t.Errorf("Validate: error message should mention cors/wildcard, got: %v", err)
+	}
+}
+
+func TestValidate_AllowsSpecificOriginWithCredentials(t *testing.T) {
+	cfg := &Config{
+		Postgres: PostgresConfig{DSN: "x"},
+		JWT:      JWTConfig{Secret: "x"},
+		AI: AIConfig{
+			Vision:   VisionConfig{APIKey: "x"},
+			Reviewer: ReviewerConfig{APIKey: "x"},
+		},
+		Server: ServerConfig{CORS: CORSConfig{
+			AllowedOrigins:   []string{"https://app.example.com"},
+			AllowCredentials: true,
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("specific origin + credentials should be valid: %v", err)
+	}
+}
+
+func TestEnvOverrides_CORSAllowedOrigins(t *testing.T) {
+	// whitespace-padded, leading/trailing commas, empty middle part
+	t.Setenv("COEUS_CORS_ALLOWED_ORIGINS", " https://a.com , , https://b.com ,")
+	cfg := &Config{}
+	if err := applyEnvOverrides(cfg); err != nil {
+		t.Fatalf("applyEnvOverrides: %v", err)
+	}
+	want := []string{"https://a.com", "https://b.com"}
+	if len(cfg.Server.CORS.AllowedOrigins) != len(want) {
+		t.Fatalf("origins: got %v want %v", cfg.Server.CORS.AllowedOrigins, want)
+	}
+	for i, o := range want {
+		if cfg.Server.CORS.AllowedOrigins[i] != o {
+			t.Errorf("origins[%d]: got %q want %q", i, cfg.Server.CORS.AllowedOrigins[i], o)
+		}
+	}
+}
+
+func TestEnvOverrides_CORSOriginsAllEmptyKeepsDefault(t *testing.T) {
+	t.Setenv("COEUS_CORS_ALLOWED_ORIGINS", ",,")
+	cfg := &Config{Server: ServerConfig{CORS: CORSConfig{AllowedOrigins: []string{"*"}}}}
+	if err := applyEnvOverrides(cfg); err != nil {
+		t.Fatalf("applyEnvOverrides: %v", err)
+	}
+	if len(cfg.Server.CORS.AllowedOrigins) != 1 || cfg.Server.CORS.AllowedOrigins[0] != "*" {
+		t.Errorf("all-empty origins should keep YAML default: got %v", cfg.Server.CORS.AllowedOrigins)
+	}
+}
+
+func TestEnvOverrides_CORSAllowCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{"true", true}, {"1", true}, {"TRUE", true}, {"True", true},
+		{"false", false}, {"0", false}, {"FALSE", false},
+	} {
+		t.Run(tc.in, func(t *testing.T) {
+			t.Setenv("COEUS_CORS_ALLOW_CREDENTIALS", tc.in)
+			cfg := &Config{}
+			if err := applyEnvOverrides(cfg); err != nil {
+				t.Fatalf("applyEnvOverrides(%q): %v", tc.in, err)
+			}
+			if cfg.Server.CORS.AllowCredentials != tc.want {
+				t.Errorf("AllowCredentials(%q): got %v want %v", tc.in, cfg.Server.CORS.AllowCredentials, tc.want)
+			}
+		})
+	}
+}
+
+func TestEnvOverrides_CORSAllowCredentialsInvalidErrors(t *testing.T) {
+	for _, bad := range []string{"yes", "on", "maybe", "2"} {
+		t.Run(bad, func(t *testing.T) {
+			t.Setenv("COEUS_CORS_ALLOW_CREDENTIALS", bad)
+			cfg := &Config{}
+			err := applyEnvOverrides(cfg)
+			if err == nil {
+				t.Errorf("applyEnvOverrides(%q): expected error, got nil", bad)
+			}
+		})
+	}
+}

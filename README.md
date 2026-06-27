@@ -92,6 +92,8 @@ else has sensible defaults.
 | `COEUS_AI_EMBEDDER_BASE_URL` | no | OpenAI default | Embeddings base URL |
 | `COEUS_SERVER_ADDR` | no | `:8080` | HTTP listen address |
 | `COEUS_WORKERS_COUNT` | no | `4` | Pipeline worker count |
+| `COEUS_CORS_ALLOWED_ORIGINS` | no | `*` (all origins) | Comma-separated allowed origins for CORS (e.g. `https://app.example.com,https://admin.example.com`) |
+| `COEUS_CORS_ALLOW_CREDENTIALS` | no | `false` | Allow cookies/credentials in CORS (`true\|false\|1\|0`). Cannot be `true` with a wildcard `*` origin — the server refuses to start |
 
 > **Embedder is optional.** If `COEUS_AI_EMBEDDER_API_KEY` is unset, the
 > pipeline skips semantic dedup — questions are still stored, just without
@@ -109,6 +111,14 @@ else has sensible defaults.
 > Update `ai.embedder.model` to `nomic-embed-text` and `dim` to `768` in
 > `config.yaml` to match.
 
+> **CORS is enabled by default** (`allowed_origins: ["*"]`,
+> `allow_credentials: false`). A cross-origin browser SPA can call the API
+> directly — preflight `OPTIONS` requests are answered with `204` before auth
+> middleware runs. For production with cookies, set
+> `COEUS_CORS_ALLOWED_ORIGINS` to specific origins and
+> `COEUS_CORS_ALLOW_CREDENTIALS=true`. The server refuses to start if
+> credentials are enabled alongside a wildcard `*` origin.
+
 ### Defaults (config.yaml)
 
 <details>
@@ -120,6 +130,13 @@ server:
   read_timeout: 15s
   write_timeout: 120s
   shutdown_timeout: 30s
+  cors:
+    allowed_origins: ["*"]
+    allowed_methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
+    allowed_headers: ["Authorization", "Content-Type", "X-Request-Id"]
+    expose_headers: ["X-Request-Id"]
+    allow_credentials: false
+    max_age: 12h
 
 postgres:
   max_conns: 20
@@ -171,7 +188,8 @@ Accounts have one of two roles:
   (provisioned out-of-band; there is no public expert registration)
 
 The `/questions` endpoints serve both roles with different behavior; the expert
-image-access endpoints and `PATCH /questions/:id` are expert-only.
+image-access endpoints, `POST /questions` (manual entry), and
+`PATCH /questions/:id` are expert-only.
 
 ### Health
 
@@ -235,13 +253,44 @@ from the value's index in `choices`:
 }
 ```
 
-**Expert** — moderation queue and verification:
+**Expert** — moderation queue, verification, and manual entry:
 
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/v1/questions` | Moderation queue. Optional `status=moderation\|error` (default `moderation`), `tag`, `page`, `per_page` |
 | GET | `/api/v1/questions/:id` | Any question with full context (explanation, tags, image link) |
+| POST | `/api/v1/questions` | **Expert only** (`user` → 403). Hand-author a canonical `verified` question (bypasses the image pipeline) |
 | PATCH | `/api/v1/questions/:id` | **Expert only** (`user` → 403). Promote to `verified` |
+
+POST body (create a free-standing verified question — only `question`,
+`choices` (≥ 2), and `answers` (≥ 1) are required):
+
+```json
+{
+  "question": "Укажите, какие из данных формул соответствуют кислотам:",
+  "choices": ["Fe(OH)₂","Cs₂O","HBr","Na₂CO₃","H₂SO₄"],
+  "answers": ["HBr","H₂SO₄"],
+  "multiple_correct": true,
+  "choice_labeling": "letter",
+  "explanation": "...",
+  "tags": ["chemistry"],
+  "confidence": 0.99
+}
+```
+
+- `confidence` defaults to **0.99** when omitted (not 1.0 like PATCH).
+- `choice_labeling` defaults to `"letter"`.
+- The server appends the `manual-entry` tag; `ai-generated` is never added.
+- Stored with `status = verified`, `verified_at = now`, `verified_by = <caller>`,
+  `number = 0` (not linked to a session or image).
+- If an identical question exists (exact-hash match), returns **409** with the
+  existing `question_id`:
+  ```json
+  {"error": {"code": "duplicate", "message": "question already exists", "question_id": "uuid"}}
+  ```
+- If the embedder is configured, an embedding is generated best-effort (failures
+  are logged, never block creation).
+- **201** → full expert response shape.
 
 PATCH body (overwrites the question in place; `answers`/`choices`/`explanation`/`tags`/`confidence` are all optional):
 
@@ -284,7 +333,9 @@ are a user-side concern):
 Each extracted question enters the store at `moderation`. An expert reviews it
 (with the source image and the DeepSeek verification report for context) and
 `PATCH`es it to `verified`, after which future matches reuse the canonical
-answer.
+answer. An expert can also hand-author a question directly via
+`POST /questions` — these enter the store already at `verified` with a
+`manual-entry` tag (no image, no pipeline).
 
 | `status` | Meaning |
 |---|---|
@@ -362,6 +413,24 @@ curl -s localhost:8080/api/v1/questions/$QID \
   -H 'Content-Type: application/json' \
   -X PATCH \
   -d '{"status":"verified","answers":["HBr","H₂SO₄"],"confidence":0.95}' | jq
+```
+
+### Example: Expert manual question entry
+
+```bash
+# Hand-author a canonical verified question without uploading an image
+curl -s localhost:8080/api/v1/questions \
+  -H "Authorization: Bearer $EXPERT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "question": "Укажите, какие из данных формул соответствуют кислотам:",
+    "choices": ["Fe(OH)₂","Cs₂O","HBr","Na₂CO₃","H₂SO₄"],
+    "answers": ["HBr","H₂SO₄"],
+    "multiple_correct": true,
+    "tags": ["chemistry"],
+    "confidence": 0.99
+  }' | jq
+# → 201, ExpertQuestionResponse with status:"verified", tags:["chemistry","manual-entry"]
 ```
 
 ## Project Structure
@@ -548,6 +617,9 @@ WantedBy=multi-user.target
 - [ ] AI API keys are provisioned with appropriate rate limits
 - [ ] `COEUS_WORKERS_COUNT` tuned to match CPU cores and DB connection pool
   (`postgres.max_conns` defaults to 20; each worker may hold a connection)
+- [ ] CORS: if using cookies/credentials, set `COEUS_CORS_ALLOWED_ORIGINS` to
+  specific origins and `COEUS_CORS_ALLOW_CREDENTIALS=true` (wildcard `*` +
+  credentials is rejected at startup)
 - [ ] Reverse proxy (nginx, Caddy) in front for TLS termination
 - [ ] `upload.max_bytes` (10 MB default) fits your use case
 
@@ -563,7 +635,7 @@ On `SIGINT`/`SIGTERM`, the server:
 
 ## Tech Stack
 
-- **Go 1.26** — Gin web framework, `log/slog` structured logging
+- **Go 1.26** — Gin web framework, `gin-contrib/cors` for cross-origin support, `log/slog` structured logging
 - **PostgreSQL** — pgvector for semantic similarity, `LISTEN`/`NOTIFY` for job
   queue, pgcrypto for UUID generation
 - **libvips** (via govips) — high-performance image processing (CGO)

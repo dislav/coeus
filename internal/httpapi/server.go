@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/vlgrigoriev/coeus/internal/auth"
@@ -35,10 +36,19 @@ func NewServer(
 	pool *pgxpool.Pool,
 	uploadCfg config.UploadConfig,
 	embedder pipeline.AIEmbedder,
+	corsCfg config.CORSConfig,
 ) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(Recover(), RequestLog())
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     corsCfg.AllowedOrigins,
+		AllowMethods:     corsCfg.AllowedMethods,
+		AllowHeaders:     corsCfg.AllowedHeaders,
+		ExposeHeaders:    corsCfg.ExposeHeaders,
+		AllowCredentials: corsCfg.AllowCredentials,
+		MaxAge:           corsCfg.MaxAge,
+	}))
 
 	s := &Server{
 		router: r, userRepo: userRepo, sessionRepo: sessionRepo,

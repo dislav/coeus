@@ -63,7 +63,7 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 
 	server := httpapi.NewServer(
 		userRepo, sessionRepo, imageRepo, questionRepo, jobQueue,
-		jwtMgr, pool, cfg.Upload, emb,
+		jwtMgr, pool, cfg.Upload, emb, cfg.Server.CORS,
 	)
 
 	vips.Startup(nil)

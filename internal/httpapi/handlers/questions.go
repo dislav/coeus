@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/vlgrigoriev/coeus/internal/domain"
 	"github.com/vlgrigoriev/coeus/internal/httpapi/dto"
+	"github.com/vlgrigoriev/coeus/internal/pipeline"
 	"github.com/vlgrigoriev/coeus/internal/storage"
 )
 
@@ -23,10 +24,11 @@ const (
 type QuestionHandler struct {
 	questions storage.QuestionRepo
 	sessions  storage.SessionRepo
+	embedder  pipeline.AIEmbedder
 }
 
-func NewQuestionHandler(questions storage.QuestionRepo, sessions storage.SessionRepo) *QuestionHandler {
-	return &QuestionHandler{questions: questions, sessions: sessions}
+func NewQuestionHandler(questions storage.QuestionRepo, sessions storage.SessionRepo, embedder pipeline.AIEmbedder) *QuestionHandler {
+	return &QuestionHandler{questions: questions, sessions: sessions, embedder: embedder}
 }
 
 func parsePaging(c *gin.Context) (page, perPage, offset int) {
@@ -186,6 +188,106 @@ func (h *QuestionHandler) Update(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, toExpertResponse(ev))
+}
+
+// Create — POST /api/v1/questions. Expert only (RoleGuard enforces 403 at the route).
+// Hand-authors a canonical verified question, bypassing the image pipeline (spec §3.2).
+func (h *QuestionHandler) Create(c *gin.Context) {
+	var req dto.CreateQuestionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+		return
+	}
+	if req.ChoiceLabeling != "" &&
+		req.ChoiceLabeling != domain.ChoiceLabelingLetter &&
+		req.ChoiceLabeling != domain.ChoiceLabelingNumber {
+		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+		return
+	}
+	confidence := 0.99
+	if req.Confidence != nil {
+		if *req.Confidence < 0 || *req.Confidence > 1 {
+			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+			return
+		}
+		confidence = *req.Confidence
+	}
+	choiceLabeling := req.ChoiceLabeling
+	if choiceLabeling == "" {
+		choiceLabeling = domain.ChoiceLabelingLetter
+	}
+
+	norm := domain.NormalizeQuestion(req.Question)
+	hash := domain.HashQuestion(norm)
+
+	// Exact-hash dedup. On hit, return the existing id inline so the expert can PATCH it.
+	existing, err := h.questions.FindExact(c.Request.Context(), hash)
+	if err != nil {
+		slog.Error("manual question exact dedup failed",
+			"request_id", c.GetString("request_id"), "err", err)
+		c.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+	if existing != nil {
+		c.AbortWithStatusJSON(http.StatusConflict, gin.H{"error": gin.H{
+			"code":        "duplicate",
+			"message":     "question already exists",
+			"question_id": existing.ID,
+		}})
+		return
+	}
+
+	// Best-effort embedding — never fails the request. Skipped entirely when unconfigured.
+	var embedding []float32
+	if h.embedder != nil {
+		emb, embErr := h.embedder.Embed(c.Request.Context(), req.Question)
+		if embErr != nil {
+		slog.Error("manual question embedder failed",
+			"request_id", c.GetString("request_id"), "err", embErr)
+		} else {
+			embedding = emb
+		}
+	}
+
+	expertID := c.GetString("user_id")
+	now := time.Now().UTC().Format(time.RFC3339)
+	// tags = req.Tags + ["manual-entry"]; copy to avoid aliasing req.Tags.
+	tags := make([]string, 0, len(req.Tags)+1)
+	tags = append(tags, req.Tags...)
+	tags = append(tags, "manual-entry")
+
+	q := &domain.Question{
+		Number:          0,
+		Text:            req.Question,
+		TextNorm:        norm,
+		TextHash:        hash,
+		MultipleCorrect: req.MultipleCorrect,
+		Choices:         req.Choices,
+		Answers:         req.Answers,
+		ChoiceLabeling:  choiceLabeling,
+		Confidence:      confidence,
+		Explanation:     req.Explanation,
+		Embedding:       embedding,
+		Status:          domain.QuestionStatusVerified,
+		VerifiedAt:      &now,
+		VerifiedBy:      &expertID,
+		Tags:            tags,
+	}
+	id, err := h.questions.Create(c.Request.Context(), q)
+	if err != nil {
+		slog.Error("manual question create failed",
+			"expert_id", expertID, "request_id", c.GetString("request_id"), "err", err)
+		c.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	ev, err := h.questions.FindExpertByID(c.Request.Context(), id)
+	if err != nil {
+		slog.Warn("manual question re-fetch failed", "question_id", id, "err", err)
+		c.JSON(http.StatusCreated, gin.H{"id": id, "status": domain.QuestionStatusVerified})
+		return
+	}
+	c.JSON(http.StatusCreated, toExpertResponse(ev))
 }
 
 func toUserResponse(q *storage.QuestionWithSession) dto.UserQuestionResponse {

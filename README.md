@@ -191,6 +191,18 @@ The `/questions` endpoints serve both roles with different behavior; the expert
 image-access endpoints, `POST /questions` (manual entry), and
 `PATCH /questions/:id` are expert-only.
 
+#### Promoting a user to expert
+
+There is no API endpoint for role management — promotion is a direct database
+operation. Find the user by email and flip the `role` column:
+
+```bash
+psql "$COEUS_POSTGRES_DSN" -c "UPDATE users SET role = 'expert' WHERE email = 'user@example.com';"
+```
+
+The change takes effect on the next login (or token refresh) — existing JWTs
+embed the old role and remain valid until they expire.
+
 ### Health
 
 | Method | Path | Description |

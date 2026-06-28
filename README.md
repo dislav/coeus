@@ -197,7 +197,11 @@ There is no API endpoint for role management — promotion is a direct database
 operation. Find the user by email and flip the `role` column:
 
 ```bash
+# Local PostgreSQL
 psql "$COEUS_POSTGRES_DSN" -c "UPDATE users SET role = 'expert' WHERE email = 'user@example.com';"
+
+# Docker (coeus-db is the container name from the Development section)
+docker exec -it coeus-db psql -U postgres -d coeus -c "UPDATE users SET role = 'expert' WHERE email = 'user@example.com';"
 ```
 
 The change takes effect on the next login (or token refresh) — existing JWTs

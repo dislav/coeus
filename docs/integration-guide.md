@@ -21,7 +21,8 @@ it.
 7. [Expert moderation flow](#7-expert-moderation-flow)
 8. [Frontend integration patterns — "how to use correctly"](#8-frontend-integration-patterns--how-to-use-correctly)
 9. [TypeScript type reference](#9-typescript-type-reference)
-10. [Gotchas & common mistakes](#10-gotchas--common-mistakes)
+10. [Domain entities & FSD structure](#10-domain-entities--fsd-structure)
+11. [Gotchas & common mistakes](#11-gotchas--common-mistakes)
 
 ---
 
@@ -722,7 +723,149 @@ export interface ApiErrorBody { error: { code: string; message: string }; }
 
 ---
 
-## 10. Gotchas & common mistakes
+## 10. Domain entities & FSD structure
+
+This section maps the Coeus API to [Feature-Sliced Design](https://feature-sliced.design/)
+(FSD) layers so you can scaffold the frontend with the correct separation of
+concerns.
+
+### Key domain entities
+
+Four entities span the entire application:
+
+| Entity | Description | Key fields | Lifecycle |
+|---|---|---|---|
+| **User** | Authenticated account with a role | `id`, `email`, `role` | Persists for token lifetime; role never changes |
+| **Session** | Time-boxed upload window | `id`, `expires_at`, `status`, `duration_seconds`, `buffer_seconds` | `open` → `closed` / `expired`; enforced by `expires_at` |
+| **Image** | Uploaded exam photo + async pipeline job | `id`, `mime`, `width`, `height`, `job_status`, `created_at` | `pending` → `processing` → `done` / `failed` |
+| **Question** | Parsed MCQ — **two response shapes by role** (see [§6.3](#63-questions--user-view) / [§6.4](#64-questions--expert-view)) | `id`, `question`, `choices`, `answers`, `status`, `confidence`, `tags` | `moderation` → `verified` (or `error` → `verified`) |
+
+Entity relationships:
+
+```
+User ──owns──▶ Session ──contains──▶ Image ──extracts──▶ Question
+                                                      │
+Expert ──verifies──▶ Question ◀──image_id──── Image
+                          │
+                 (verification report via image_id)
+```
+
+> **Verification report** is a sub-resource of Image, fetched via
+> `GET /images/:id/verification-report`. It is raw JSON (nullable), expert-only,
+> and has no independent lifecycle — treat it as part of the Image entity, not a
+> separate entity.
+
+### The Question entity — role-split design
+
+Question is the only entity with **two response shapes**. This is the single most
+important architectural decision for the frontend:
+
+- **User view** — `UserQuestionResponse`: `answers` is `AnswerRef[]` (derived
+  display labels A/B/C… or 1/2/3…). No `explanation`, `tags`, `image_id`,
+  `choice_labeling`.
+- **Expert view** — `ExpertQuestionResponse`: `answers` is `string[]` (raw
+  values). Full fields including `explanation`, `tags`, `image_id`,
+  `verified_at`, `verified_by`.
+
+Both types live in `entities/question/model/`. The **role branching** (which shape
+to expect, which UI to render) happens in the **pages** and **features** layers —
+never inside the entity itself. The entity is a passive data container.
+
+### FSD layer mapping
+
+```
+src/
+├── app/                           # App shell: providers, router, global styles
+│
+├── pages/                         # Route-level compositions
+│   ├── login/                     #   /login           (public)
+│   ├── register/                  #   /register        (public)
+│   ├── sessions/                  #   /sessions        (user: session list)
+│   ├── session/                   #   /sessions/:id    (user: upload + answers)
+│   ├── moderation/                #   /moderation      (expert: queue)
+│   └── manual-entry/              #   /manual-entry    (expert: POST /questions)
+│
+├── widgets/                       # Composed blocks (2+ entities/features)
+│   ├── session-timer/             #   Countdown from expires_at
+│   ├── upload-progress/           #   Image upload + job_status poll indicator
+│   ├── answer-list/               #   User: rendered answers in a session
+│   ├── moderation-item/           #   Expert: question card + image + report
+│   └── question-editor/           #   Expert: shared form for PATCH and POST
+│
+├── features/                      # User interactions (each delivers business value)
+│   ├── auth/                      #   login, register, refresh, token lifecycle
+│   ├── session-create/            #   POST /sessions
+│   ├── session-close/             #   POST /sessions/:id/close
+│   ├── image-upload/              #   Multipart POST + FormData construction
+│   ├── job-poll/                  #   Poll GET /sessions/:id/images until terminal
+│   ├── question-verify/           #   PATCH /questions/:id (expert)
+│   └── question-create/           #   POST /questions (expert, manual entry)
+│
+├── entities/                      # Domain objects (data model + API + UI)
+│   ├── user/
+│   │   ├── model/                 #   { id, email, role }
+│   │   └── ui/                    #   RoleBadge, UserAvatar
+│   ├── session/
+│   │   ├── api/                   #   create, list, get, close
+│   │   ├── model/                 #   SessionResponse, SessionDetailResponse
+│   │   └── ui/                    #   SessionStatusBadge
+│   ├── image/
+│   │   ├── api/                   #   upload, list, getBytes, getVerificationReport
+│   │   ├── model/                 #   ImageResponse, JobStatus
+│   │   └── ui/                    #   JobStatusBadge, ImageThumbnail
+│   └── question/
+│       ├── api/                   #   list, get, create, patch
+│       ├── lib/                   #   deriveAnswerRefs (A/B/C… or 1/2/3…)
+│       ├── model/                 #   UserQuestionResponse, ExpertQuestionResponse
+│       └── ui/                    #   QuestionCard (role-agnostic shell)
+│
+└── shared/                        # Framework-agnostic code (no slices, segments only)
+    ├── api/                       #   Fetch client, base URL, Bearer header
+    │                              #     injection, 401 interceptor, ApiError
+    ├── config/                    #   API base URL, environment flags
+    ├── lib/                       #   Pagination helper, RFC 3339 date utils,
+    │                              #     JWT payload decode
+    └── ui/                        #   Design system (Button, Input, Modal, …)
+```
+
+### Import rules (FSD contract)
+
+Each layer may only import from layers **below** it:
+
+```
+app  →  pages  →  widgets  →  features  →  entities  →  shared
+```
+
+- **shared** → external packages only.
+- **entities** → `shared` + other entities (via `@x` public API for cross-refs).
+- **features** → `entities` + `shared` (**never** another feature).
+- **widgets** → `features` + `entities` + `shared`.
+- **pages** → `widgets` + `features` + `entities` + `shared`.
+- **app** → everything.
+
+**Never import sideways between features** (e.g., `features/question-verify` must
+not import from `features/question-create`). Compose them at the widget or page
+level instead.
+
+### Where things live — quick reference
+
+| Concern | FSD location | Rationale |
+|---|---|---|
+| JWT token + proactive refresh timer | `features/auth/model` | Interaction lifecycle, not a domain concept |
+| `role` branching (user vs expert routes) | `app/routes` or `pages/` | Composition decision |
+| `AnswerRef` label derivation (A/B/C… / 1/2/3…) | `entities/question/lib` | Pure transform on entity data |
+| `expires_at` countdown | `widgets/session-timer` | Composes session entity + time logic |
+| `job_status` poll loop | `features/job-poll` | Delivers "is my upload done?" |
+| Multipart `FormData` construction | `features/image-upload` | Interaction-specific |
+| Error normalization (`ApiError`) | `shared/api` | Used everywhere, framework-agnostic |
+| Pagination "load more" | `shared/lib` | Generic utility |
+| `409 duplicate` → redirect to PATCH | `features/question-create` | Feature-specific UX decision |
+| `410 session_expired` → disable upload | `pages/session` or `widgets/upload-progress` | Composition-level UX gating |
+| CORS base URL config | `shared/config` | Environment-level, not entity-specific |
+
+---
+
+## 11. Gotchas & common mistakes
 
 1. **CORS is enabled by default** (`*` origins, no credentials). A cross-origin
    browser app can call the API directly — preflight `OPTIONS` gets `204`. Set

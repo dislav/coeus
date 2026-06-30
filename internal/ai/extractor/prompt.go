@@ -1,59 +1,26 @@
 package extractor
 
-// systemPrompt is the extraction contract: analyze the exam image and emit one
-// JSON object with a `questions` array. Based on the extract-questions-from-image
-// skill, extended with `tags` (subject classifiers) needed by the pipeline.
-const systemPrompt = `You are an exam-image OCR and parsing engine. Analyze the image and extract
-every visible question as structured JSON.
+import "github.com/vlgrigoriev/coeus/skills"
 
-Output a single JSON object with this exact format:
-{
-  "questions": [
-    {
-      "number": <int>,
-      "question": "<full question text>",
-      "multiple_correct": <bool>,
-      "choices": ["<choice text without label prefix>", ...],
-      "answers": [{"id": "<bare label>", "value": "<choice text>"}],
-      "confidence": <0.0-1.0>,
-      "explanation": "<brief reasoning for the answer>",
-      "tags": ["<subject tag>", ...]
-    }
-  ]
-}
+// tagsExtension is a pipeline-specific addition layered on top of the tested
+// extract-questions-from-image skill. The skill itself is format-complete; this
+// only asks for the extra "tags" field the pipeline uses for routing/dedup.
+// (The JSON Schema sent in the user message also advertises this field; this
+// note makes it explicit so the model reliably populates it.)
+const tagsExtension = `
 
-Rules:
-- Strip label prefixes from choices: store "Paris" not "A) Paris".
-- Answer IDs are bare labels: "A", "B", "1", "2" (no punctuation — no ")", no ".").
-- answers[].value must match a choice string exactly (without label prefix).
-- Tags are subject classifiers: "math", "chemistry", "history", "medicine", etc.
-  Populate at least one tag per question when the subject is identifiable.
-- Confidence scoring:
-    0.95-1.0: very clear, little doubt
-    0.80-0.94: minor ambiguity (small/blurry text)
-    0.50-0.79: significant inference needed (rotated, partial)
-    0.0-0.49: unreliable / guess
-- Image orientation: mentally rotate the image to the correct orientation before
-  reading. Do not mention rotation unless it caused partial extraction failure.
-- Never invent answers. If the correct answer is not visible, leave "answers": []
-  and lower confidence.
+---
 
-Error handling — if the image cannot be fully parsed, return:
-{
-  "error": {
-    "code": "unreadable_image" | "partial_extraction" | "no_questions_found",
-    "message": "<human-readable description>",
-    "details": "<which questions were affected, if applicable>",
-    "questions_extracted": <N>,
-    "questions_expected": <M>
-  },
-  "questions": [<any questions that were successfully extracted>]
-}
+Pipeline extension (in addition to the output format above) — required field:
+- "tags": an array of lowercase subject classifiers used for routing and
+  de-duplication. Add it to every question object. Examples: "math",
+  "chemistry", "physics", "biology", "history", "geography", "medicine",
+  "literature", "informatics". Provide at least one tag per question when the
+  subject is identifiable; use [] only when it genuinely cannot be determined.
+  Example: "tags": ["chemistry"].`
 
-Error codes:
-- unreadable_image: the entire image is unreadable (blurry, blank, corrupt).
-- partial_extraction: some questions extracted, some not (include the extracted
-  ones in "questions" and list the missing ones in "details").
-- no_questions_found: the image is readable but contains no questions.
-
-[Reference: skills/extract-questions-from-image/SKILL.md for the full specification]`
+// systemPrompt is the system prompt sent to the vision model. It is the full,
+// tested extract-questions-from-image skill — embedded verbatim from
+// skills/extract-questions-from-image/SKILL.md, the single source of truth —
+// plus the tags extension above.
+var systemPrompt = skills.ExtractPrompt + tagsExtension

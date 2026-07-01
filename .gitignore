@@ -13,3 +13,4 @@ go.work.sum
 config.local.yaml
 data/
 /coeus
+.worktrees/

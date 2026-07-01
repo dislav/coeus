@@ -35,12 +35,12 @@ func (r *QuestionRepo) Create(ctx context.Context, q *domain.Question) (string, 
 	var id string
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO questions (number, question, question_normalized, question_hash,
-		    multiple_correct, choices, answers, choice_labeling, confidence,
+		    choices, answers, choice_labeling, confidence,
 		    explanation, embedding, status, verified_at, verified_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id
 	`, q.Number, q.Text, q.TextNorm, q.TextHash,
-		q.MultipleCorrect, choicesJSON, answersJSON, q.ChoiceLabeling,
+		choicesJSON, answersJSON, q.ChoiceLabeling,
 		q.Confidence, q.Explanation, embedding, q.Status,
 		q.VerifiedAt, q.VerifiedBy,
 	).Scan(&id)
@@ -120,7 +120,7 @@ func (r *QuestionRepo) UpdateFromVerification(ctx context.Context, id string, co
 
 func (r *QuestionRepo) ListForUser(ctx context.Context, sessionID string, statusFilter string, limit, offset int) ([]*storage.QuestionWithSession, error) {
 	query := `
-		SELECT q.id, q.number, q.question, q.multiple_correct, q.choices, q.answers,
+		SELECT q.id, q.number, q.question, q.choices, q.answers,
 		       q.choice_labeling, q.confidence, q.status,
 		       sq.session_id, sq.image_id, sq.extracted_number, sq.extracted_confidence
 		FROM session_questions sq
@@ -163,7 +163,7 @@ func (r *QuestionRepo) ListForModeration(ctx context.Context, statusFilter, tagF
 	if tagFilter != "" {
 		query = `
 		SELECT DISTINCT q.id, q.number, q.question, q.question_normalized, q.question_hash,
-		       q.multiple_correct, q.choices, q.answers, q.choice_labeling,
+		       q.choices, q.answers, q.choice_labeling,
 		       q.confidence, q.explanation,
 		       to_char(q.verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		       q.verified_by::text,
@@ -258,7 +258,7 @@ func (r *QuestionRepo) ListForModerationExpert(ctx context.Context, statusFilter
 // QuestionWithSession and picks the earliest-linked session deterministically.
 func (r *QuestionRepo) FindForUserByID(ctx context.Context, questionID, userID string) (*storage.QuestionWithSession, error) {
 	query := `
-		SELECT q.id, q.number, q.question, q.multiple_correct, q.choices, q.answers,
+		SELECT q.id, q.number, q.question, q.choices, q.answers,
 		       q.choice_labeling, q.confidence, q.status,
 		       sq.session_id, sq.image_id, sq.extracted_number, sq.extracted_confidence
 		FROM session_questions sq
@@ -442,7 +442,7 @@ func (r *QuestionRepo) getTags(ctx context.Context, questionID string) ([]string
 
 const questionSelectBase = `
 	SELECT q.id, q.number, q.question, q.question_normalized, q.question_hash,
-	       q.multiple_correct, q.choices, q.answers, q.choice_labeling,
+	       q.choices, q.answers, q.choice_labeling,
 	       q.confidence, q.explanation,
 	       to_char(q.verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	       q.verified_by::text,
@@ -455,7 +455,7 @@ const questionSelectBase = `
 // (DISTINCT ON would force ORDER BY q.id first).
 const questionExpertSelectBase = `
 	SELECT q.id, q.number, q.question, q.question_normalized, q.question_hash,
-	       q.multiple_correct, q.choices, q.answers, q.choice_labeling,
+	       q.choices, q.answers, q.choice_labeling,
 	       q.confidence, q.explanation,
 	       to_char(q.verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	       q.verified_by::text,
@@ -473,7 +473,7 @@ func scanQuestion(row pgx.Row) (*domain.Question, error) {
 	var verifiedAt, verifiedBy *string
 	err := row.Scan(
 		&q.ID, &q.Number, &q.Text, &q.TextNorm, &q.TextHash,
-		&q.MultipleCorrect, &choices, &answers, &q.ChoiceLabeling,
+		&choices, &answers, &q.ChoiceLabeling,
 		&q.Confidence, &q.Explanation, &verifiedAt, &verifiedBy, &q.Status,
 	)
 	if err != nil {
@@ -492,7 +492,7 @@ func scanQuestionRow(rows pgx.Rows) (*domain.Question, error) {
 	var verifiedAt, verifiedBy *string
 	err := rows.Scan(
 		&q.ID, &q.Number, &q.Text, &q.TextNorm, &q.TextHash,
-		&q.MultipleCorrect, &choices, &answers, &q.ChoiceLabeling,
+		&choices, &answers, &q.ChoiceLabeling,
 		&q.Confidence, &q.Explanation, &verifiedAt, &verifiedBy, &q.Status,
 	)
 	if err != nil {
@@ -505,7 +505,7 @@ func scanQuestionRow(rows pgx.Rows) (*domain.Question, error) {
 	return q, nil
 }
 
-// scanQuestionExpert scans the 15 base question columns + image_id + has_report.
+// scanQuestionExpert scans the questionSelectBase columns plus image_id and has_report.
 // Accepts anything with a Scan(...) method (pgx.Row and pgx.Rows both qualify).
 func scanQuestionExpert(row interface {
 	Scan(dest ...any) error
@@ -519,7 +519,7 @@ func scanQuestionExpert(row interface {
 	var hasReport bool
 	if err := row.Scan(
 		&q.ID, &q.Number, &q.Text, &q.TextNorm, &q.TextHash,
-		&q.MultipleCorrect, &choices, &answers, &q.ChoiceLabeling,
+		&choices, &answers, &q.ChoiceLabeling,
 		&q.Confidence, &q.Explanation, &verifiedAt, &verBy, &q.Status,
 		&imageID, &hasReport,
 	); err != nil {
@@ -544,7 +544,7 @@ func scanQuestionWithSession(row interface {
 	qws := &storage.QuestionWithSession{Question: &domain.Question{}}
 	var choices, answers []byte
 	if err := row.Scan(
-		&qws.ID, &qws.Number, &qws.Text, &qws.MultipleCorrect,
+		&qws.ID, &qws.Number, &qws.Text,
 		&choices, &answers, &qws.ChoiceLabeling, &qws.Confidence, &qws.Status,
 		&qws.SessionID, &qws.ImageID, &qws.ExtractedNumber, &qws.ExtractedConfidence,
 	); err != nil {

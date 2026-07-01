@@ -16,7 +16,6 @@ type answerDTO struct {
 type questionDTO struct {
 	Number          int         `json:"number"`
 	Question        string      `json:"question"`
-	MultipleCorrect bool        `json:"multiple_correct"`
 	Choices         []string    `json:"choices"`
 	Answers         []answerDTO `json:"answers"`
 	Confidence      float64     `json:"confidence"`
@@ -33,7 +32,6 @@ type verificationInput struct {
 type verifiedQuestionDTO struct {
 	Number          int         `json:"number"`
 	Question        string      `json:"question"`
-	MultipleCorrect bool        `json:"multiple_correct"`
 	Choices         []string    `json:"choices"`
 	Answers         []answerDTO `json:"answers"`
 	Confidence      float64     `json:"confidence"`
@@ -64,7 +62,6 @@ func fromPipeline(questions []pipeline.ExtractedQuestion) verificationInput {
 		out.Questions[i] = questionDTO{
 			Number:          q.Number,
 			Question:        q.Text,
-			MultipleCorrect: q.MultipleCorrect,
 			Choices:         choices,
 			Answers:         answers,
 			Confidence:      q.Confidence,

@@ -32,7 +32,6 @@ Return a single JSON object with this exact structure. Every key shown is requir
     {
       "number": 1,
       "question": "Full question text as a single string",
-      "multiple_correct": false,
       "choices": [
         "Fe(OH)₂",
         "Cs₂O",
@@ -48,13 +47,12 @@ Return a single JSON object with this exact structure. Every key shown is requir
 }
 ```
 
-**Required keys for every question object:** `number`, `question`, `multiple_correct`, `choices`, `answers`, `confidence`, `explanation`. Do not rename, omit, or replace any of these keys.
+**Required keys for every question object:** `number`, `question`, `choices`, `answers`, `confidence`, `explanation`. Do not rename, omit, or replace any of these keys.
 
 ### Field rules
 
 - `number`: The question number shown in the image. If there is no number, use `1` and increment sequentially.
 - `question`: The full question text. Preserve line breaks with `\\n` only when the question explicitly contains multiple lines (e.g., a table or a poem). Normally use a single line.
-- `multiple_correct`: `true` if the question or UI indicates multiple answers are allowed; otherwise `false`.
 - `choices`: Array of choice **strings** in the order they appear in the image. **Do not include the leading label prefix** (e.g., `"A) "`, `"1. "`, `"б) "`) in the string — store only the choice text itself. If the question has no explicit choices (open-ended), set this to `[]` and put the answer in `answers`.
 - `answers`: Array of objects, each with `id` and `value`:
   - `id`: The bare label used in the image, stripped of any trailing punctuation. Use only the letter or number: `"A"`, `"B"`, `"1"`, `"2"`, `"а"`, etc. Do not include `)`, `.`, or any other characters.
@@ -68,7 +66,7 @@ Return a single JSON object with this exact structure. Every key shown is requir
 
 1. **Visibly marked answers** — If the image shows checked checkboxes, filled circles, bold/highlighted choices, or any other marking, use those as the answer(s). Set confidence high if markings are clear.
 2. **Single correct answer** — If the question asks for one answer and the image does not mark it, solve or reason to find the correct choice.
-3. **Multiple correct answers** — If the question text says "choose all that apply" / "один или несколько" / "выберите верные утверждения" / or the UI uses checkboxes, set `multiple_correct: true`. Select every correct choice.
+3. **Multiple correct answers** — If the question text says "choose all that apply" / "один или несколько" / "выберите верные утверждения" / or the UI uses checkboxes, list every correct choice in the `answers` array (multi-ness is derived from the answer count).
 4. **No choices / open-ended** — If the question has no answer options, provide the answer directly in `answers` as an object with `value` only (e.g., `[{"value": "2 м/с²"}]`) and set `choices: []`.
 5. **Cannot determine** — If the image is too unclear or the question requires domain knowledge you cannot confidently apply, leave `answers: []` and lower `confidence`.
 
@@ -146,7 +144,6 @@ Output:
     {
       "number": 1,
       "question": "Укажите, какие из данных формул соответствуют кислотам:",
-      "multiple_correct": true,
       "choices": [
         "Fe(OH)₂",
         "Cs₂O",
@@ -167,7 +164,6 @@ Output:
 
 ## Common Mistakes
 
-- Forgetting to set `multiple_correct: true` when the question or UI allows multiple answers.
 - Returning only one answer when multiple are correct.
 - Returning id values that include punctuation like `"A)"`, `"1."`, or `"2)"`. IDs must be bare letters/numbers only.
 - Leaving the label prefix inside `choices` strings like `"1) ..."` or `"A) ..."`. Strip the prefix and store only the choice text.

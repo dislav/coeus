@@ -13,7 +13,6 @@ type CreateQuestionRequest struct {
 	Question        string   `json:"question" binding:"required"`
 	Choices         []string `json:"choices" binding:"required,min=2"`
 	Answers         []string `json:"answers" binding:"required,min=1"`
-	MultipleCorrect bool     `json:"multiple_correct"`
 	ChoiceLabeling  string   `json:"choice_labeling"`
 	Explanation     string   `json:"explanation"`
 	Tags            []string `json:"tags"`

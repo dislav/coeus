@@ -42,7 +42,6 @@ type ExtractedQuestion struct {
 	Text            string
 	Choices         []Answer
 	Answers         []Answer
-	MultipleCorrect bool
 	Confidence      float64  `json:"confidence,omitempty"`
 	Tags            []string `json:"tags,omitempty"` // subject tags from Kimi
 }

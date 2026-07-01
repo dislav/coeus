@@ -34,7 +34,6 @@ One or more JSON files matching the `extract-questions-from-image` output schema
     {
       "number": 1,
       "question": "...",
-      "multiple_correct": false,
       "choices": ["...", "..."],
       "answers": [{"id": "A", "value": "..."}],
       "confidence": 0.92,
@@ -58,11 +57,10 @@ Check and **fix** these issues in the output JSON:
 
 | Check | Action if fails |
 |-------|----------------|
-| All required keys present: `number`, `question`, `multiple_correct`, `choices`, `answers`, `confidence`, `explanation` | Add missing keys with sensible defaults (`multiple_correct: false`, `choices: []`, `answers: []`, `confidence: 0.5`, `explanation: ""`) |
+| All required keys present: `number`, `question`, `choices`, `answers`, `confidence`, `explanation` | Add missing keys with sensible defaults (`choices: []`, `answers: []`, `confidence: 0.5`, `explanation: ""`) |
 | `answers[].id` maps to a valid position in `choices` (A→0, B→1, ..., or 1→0, 2→1, ...) | Fix the `id` to match the actual position of `value` in `choices`. If `value` is not in `choices`, keep the original but note the mismatch |
 | `answers[].value` matches `choices[index]` for the given `id` | If `id` maps to a different choice than `value`, fix `value` to match what's actually at that position (the `id` is the source of truth since it reflects what was marked in the image) |
 | `confidence` is a number between 0.0 and 1.0 | Clamp to range; if missing or non-numeric, default to 0.5 |
-| `multiple_correct` is boolean | Coerce to boolean |
 | No duplicate `number` values | Renumber sequentially if duplicates found |
 | Question numbers are sequential (1, 2, 3...) | Fix gaps but preserve original order; note renumbering in `_verification` |
 
@@ -111,7 +109,7 @@ Re-assess the confidence score based on what you can determine from the JSON alo
 - The question text contains garbled characters, OCR artifacts, or obvious misreads (e.g., "H2S04" instead of "H₂SO₄", "Fe(OH)z" instead of "Fe(OH)₂")
 - The explanation describes visual ambiguity ("mark is faint", "checkbox partially filled")
 - The answer requires interpreting a graph, diagram, or image element you cannot see
-- `multiple_correct` is `true` but the verifier can identify additional correct choices that were missed
+- The question allows multiple answers but the verifier can identify additional correct choices that were missed
 
 **Confidence ranges** (same scale as extraction skill):
 - `0.95–1.0`: Answer is clearly correct, no ambiguity
@@ -194,7 +192,6 @@ If given a single JSON file with multiple question sets (unusual), preserve the 
     {
       "number": 1,
       "question": "Укажите, какие из данных формул соответствуют кислотам:",
-      "multiple_correct": true,
       "choices": ["Fe(OH)₂", "Cs₂O", "HBr", "Na₂CO₃", "H₂SO₄"],
       "answers": [
         {"id": "C", "value": "HBr"}
@@ -208,7 +205,7 @@ If given a single JSON file with multiple question sets (unusual), preserve the 
 
 **Verifier analysis:**
 - Structural check: PASS — all fields present, IDs valid, confidence in range.
-- Answer check: The explanation says "HBr **and** H₂SO₄" but only HBr is in the answers array. `multiple_correct` is `true`. H₂SO₄ (index 4, id "E") is also an acid and was described as checked. This is a structural inconsistency — the explanation describes two answers but only one is recorded.
+- Answer check: The explanation says "HBr **and** H₂SO₄" but only HBr is in the answers array. The question allows multiple answers (two choices are described), yet H₂SO₄ (index 4, id "E") is missing from the answers. This is a structural inconsistency — the explanation describes two answers but only one is recorded.
 - Confidence check: 0.98 is too high given the inconsistency.
 
 **Output (`chemistry_test_verified.json`):**
@@ -231,7 +228,6 @@ If given a single JSON file with multiple question sets (unusual), preserve the 
     {
       "number": 1,
       "question": "Укажите, какие из данных формул соответствуют кислотам:",
-      "multiple_correct": true,
       "choices": ["Fe(OH)₂", "Cs₂O", "HBr", "Na₂CO₃", "H₂SO₄"],
       "answers": [
         {"id": "C", "value": "HBr"}
@@ -262,7 +258,7 @@ If given a single JSON file with multiple question sets (unusual), preserve the 
 - **Changing the answers array.** Flag disagreements in the explanation instead. The human reviewer makes the final call.
 - **Skipping confidence re-evaluation.** Even if the answer is correct, the confidence may be wrong. Re-evaluate every question.
 - **Missing the `_verification` summary.** This is how the human reviewer quickly finds flagged questions. Always include it.
-- **Forgetting to handle the `multiple_correct` flag.** If the flag is `true`, check whether all correct choices are selected and whether any incorrect ones slipped in.
+- **Not checking whether all correct choices are present.** When the question allows multiple answers, verify that every correct choice is in the `answers` array and that no incorrect ones slipped in.
 - **Not detecting internal inconsistencies.** The explanation and the answers array should tell the same story. When they don't, flag it.
 
 ## Red Flags

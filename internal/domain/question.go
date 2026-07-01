@@ -28,7 +28,6 @@ type Question struct {
 	Text            string
 	TextNorm        string
 	TextHash        string
-	MultipleCorrect bool
 	Choices         []string
 	Answers         []string // value-only, shuffle-safe
 	ChoiceLabeling  string
@@ -40,6 +39,10 @@ type Question struct {
 	VerifiedBy      *string // user UUID, nil if not verified
 	Tags            []string
 }
+
+// MultipleCorrect reports whether the question has more than one correct answer.
+// Derived from len(Answers); there is no stored column (spec §3.3).
+func (q Question) MultipleCorrect() bool { return len(q.Answers) > 1 }
 
 // InferChoiceLabeling determines whether answer ids use letters or numbers.
 // Defaults to "letter" when no ids are present.

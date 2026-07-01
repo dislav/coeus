@@ -19,7 +19,6 @@ type answerDTO struct {
 type questionDTO struct {
 	Number          int         `json:"number"`
 	Question        string      `json:"question"`
-	MultipleCorrect bool        `json:"multiple_correct"`
 	Choices         []string    `json:"choices"`
 	Answers         []answerDTO `json:"answers"`
 	Confidence      float64     `json:"confidence"`
@@ -79,7 +78,6 @@ func toPipeline(r extractionResponse) pipeline.ExtractResult {
 			Text:            q.Question,
 			Choices:         assignChoiceIDs(q.Choices, labeling),
 			Answers:         mapAnswers(q.Answers),
-			MultipleCorrect: q.MultipleCorrect,
 			Confidence:      q.Confidence,
 			Tags:            q.Tags,
 		}

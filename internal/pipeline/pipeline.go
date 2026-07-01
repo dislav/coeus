@@ -177,7 +177,6 @@ func (p *Pipeline) execute(ctx context.Context, job *domain.Job) error {
 			Text:            eq.Text,
 			TextNorm:        norm,
 			TextHash:        hash,
-			MultipleCorrect: eq.MultipleCorrect,
 			Choices:         answerTexts(eq.Choices),
 			Answers:         answerTexts(eq.Answers),
 			ChoiceLabeling:  domain.InferChoiceLabeling(answerIDs(eq.Choices)),

@@ -49,3 +49,15 @@ func TestHashQuestion_KnownVector(t *testing.T) {
 		t.Errorf("HashQuestion known vector: got %q want %q", got, want)
 	}
 }
+
+func TestQuestionMultipleCorrectDerived(t *testing.T) {
+	if (Question{Answers: []string{"A"}}).MultipleCorrect() {
+		t.Errorf("single answer: got true, want false")
+	}
+	if !(Question{Answers: []string{"A", "B"}}).MultipleCorrect() {
+		t.Errorf("two answers: got false, want true")
+	}
+	if (Question{Answers: nil}).MultipleCorrect() {
+		t.Errorf("nil answers: got true, want false")
+	}
+}

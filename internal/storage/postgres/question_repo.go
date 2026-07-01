@@ -254,7 +254,7 @@ func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, upd domain
 		SET answers = $1, choices = $2, explanation = $3, confidence = $4,
 		    status = $5,
 		    verified_at = CASE WHEN $5 = 'verified' THEN now() ELSE NULL END,
-		    verified_by = CASE WHEN $5 = 'verified' THEN $6 ELSE NULL END,
+		    verified_by = CASE WHEN $5 = 'verified' THEN $6::uuid ELSE NULL END,
 		    updated_at = now()
 		WHERE id = $7
 	`, answersJSON, choicesJSON, upd.Explanation, upd.Confidence, upd.Status, expertID, id)

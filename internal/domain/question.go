@@ -21,6 +21,19 @@ const (
 	ChoiceLabelingNumber = "number"
 )
 
+// QuestionUpdate is the expert-authored full replacement of a question's
+// editable fields (spec §3.2.5). Server-managed fields (id, number, text*,
+// embedding, verified_at, verified_by) are NOT carried here. Status drives the
+// verified_at/verified_by invariant enforced in the repo.
+type QuestionUpdate struct {
+	Status      string
+	Choices     []string
+	Answers     []string
+	Explanation string
+	Tags        []string
+	Confidence  float64
+}
+
 // Question is the canonical, deduplicated knowledge base entry.
 type Question struct {
 	ID              string

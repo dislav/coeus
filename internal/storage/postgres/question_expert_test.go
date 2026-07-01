@@ -48,7 +48,9 @@ func TestUpdateByExpert_CleansImageBytesWhenLastResolved(t *testing.T) {
 	}
 
 	// Resolve q1 -> bytes MUST remain (q2 still moderation).
-	if err := questions.UpdateByExpert(ctx, q1, []string{"a"}, []string{"a"}, "", 1.0, nil, user.ID); err != nil {
+	if err := questions.UpdateByExpert(ctx, q1, domain.QuestionUpdate{
+		Status: domain.QuestionStatusVerified, Answers: []string{"a"}, Choices: []string{"a"}, Confidence: 1.0,
+	}, user.ID); err != nil {
 		t.Fatalf("update q1: %v", err)
 	}
 	img, err := imgs.FindByID(ctx, imgID)
@@ -60,7 +62,9 @@ func TestUpdateByExpert_CleansImageBytesWhenLastResolved(t *testing.T) {
 	}
 
 	// Resolve q2 -> bytes MUST now be NULL (no unresolved siblings).
-	if err := questions.UpdateByExpert(ctx, q2, []string{"b"}, []string{"b"}, "", 1.0, nil, user.ID); err != nil {
+	if err := questions.UpdateByExpert(ctx, q2, domain.QuestionUpdate{
+		Status: domain.QuestionStatusVerified, Answers: []string{"b"}, Choices: []string{"b"}, Confidence: 1.0,
+	}, user.ID); err != nil {
 		t.Fatalf("update q2: %v", err)
 	}
 	img, err = imgs.FindByID(ctx, imgID)
@@ -117,7 +121,9 @@ func TestUpdateByExpert_CleansImageBytesWhenErrorSiblingResolved(t *testing.T) {
 
 	// Step 1: resolve the 'moderation' question -> bytes MUST remain
 	//         (the 'error' sibling is still unresolved).
-	if err := questions.UpdateByExpert(ctx, qMod, []string{"a"}, []string{"a"}, "", 1.0, nil, user.ID); err != nil {
+	if err := questions.UpdateByExpert(ctx, qMod, domain.QuestionUpdate{
+		Status: domain.QuestionStatusVerified, Answers: []string{"a"}, Choices: []string{"a"}, Confidence: 1.0,
+	}, user.ID); err != nil {
 		t.Fatalf("update moderation question: %v", err)
 	}
 	img, err := imgs.FindByID(ctx, imgID)
@@ -129,7 +135,9 @@ func TestUpdateByExpert_CleansImageBytesWhenErrorSiblingResolved(t *testing.T) {
 	}
 
 	// Step 2: resolve the 'error' question -> bytes MUST now be NULL.
-	if err := questions.UpdateByExpert(ctx, qErr, []string{"a"}, []string{"a"}, "", 1.0, nil, user.ID); err != nil {
+	if err := questions.UpdateByExpert(ctx, qErr, domain.QuestionUpdate{
+		Status: domain.QuestionStatusVerified, Answers: []string{"a"}, Choices: []string{"a"}, Confidence: 1.0,
+	}, user.ID); err != nil {
 		t.Fatalf("update error question: %v", err)
 	}
 	img, err = imgs.FindByID(ctx, imgID)

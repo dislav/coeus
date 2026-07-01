@@ -156,33 +156,53 @@ func (h *QuestionHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, toUserResponse(qws))
 }
 
-// Update — PATCH /api/v1/questions/:id. Expert only (RoleGuard enforces 403 at the route).
+// Update — PUT /api/v1/questions/:id. Expert only (RoleGuard enforces 403 at
+// the route). Full-replace of editable fields with backend validation (spec §3.2).
 func (h *QuestionHandler) Update(c *gin.Context) {
 	id := c.Param("id")
-	var req struct {
-		Status      string   `json:"status" binding:"required"`
-		Answers     []string `json:"answers"`
-		Choices     []string `json:"choices"`
-		Explanation string   `json:"explanation"`
-		Tags        []string `json:"tags"`
-		Confidence  *float64 `json:"confidence"`
-	}
+	var req dto.UpdateQuestionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
 		return
 	}
-	if req.Status != domain.QuestionStatusVerified {
+
+	// Struct-level rule: answers must be a subset of choices, matched by exact,
+	// case-sensitive Go string equality (spec §3.2.3, decision #7).
+	if !answersSubsetOfChoices(req.Answers, req.Choices) {
 		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
 		return
 	}
 
-	confidence := 1.0 // expert confirms -> full confidence when omitted
+	// Field rules: confidence range; tags count + non-empty (spec §3.2.3).
+	confidence := 1.0 // matches today's "expert confirms => full confidence" default
 	if req.Confidence != nil {
+		if *req.Confidence < 0 || *req.Confidence > 1 {
+			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+			return
+		}
 		confidence = *req.Confidence
+	}
+	if len(req.Tags) > 20 {
+		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+		return
+	}
+	for _, tg := range req.Tags {
+		if tg == "" {
+			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+			return
+		}
 	}
 
 	expertID := c.GetString("user_id")
-	if err := h.questions.UpdateByExpert(c.Request.Context(), id, req.Answers, req.Choices, req.Explanation, confidence, req.Tags, expertID); err != nil {
+	upd := domain.QuestionUpdate{
+		Status:      req.Status,
+		Choices:     req.Choices,
+		Answers:     req.Answers,
+		Explanation: req.Explanation,
+		Tags:        req.Tags,
+		Confidence:  confidence,
+	}
+	if err := h.questions.UpdateByExpert(c.Request.Context(), id, upd, expertID); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			c.JSON(http.StatusNotFound, errorResponse(domain.ErrNotFound))
 			return
@@ -196,16 +216,35 @@ func (h *QuestionHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Re-fetch the updated expert view for the response (Decision #4).
+	// Re-fetch the updated expert view for the response.
 	ev, err := h.questions.FindExpertByID(c.Request.Context(), id)
 	if err != nil {
 		slog.Warn("re-fetch after expert update failed, returning partial body",
 			"question_id", id,
 			"err", err)
-		c.JSON(http.StatusOK, gin.H{"id": id, "status": domain.QuestionStatusVerified})
+		c.JSON(http.StatusOK, gin.H{"id": id, "status": req.Status})
 		return
 	}
 	c.JSON(http.StatusOK, toExpertResponse(ev))
+}
+
+// answersSubsetOfChoices reports whether every answer equals some choice using
+// exact, case-sensitive Go string equality (no normalization). Duplicates in
+// answers are fine as long as each is present in choices (spec §3.2.3).
+func answersSubsetOfChoices(answers, choices []string) bool {
+	for _, a := range answers {
+		found := false
+		for _, ch := range choices {
+			if a == ch {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // Create — POST /api/v1/questions. Expert only (RoleGuard enforces 403 at the route).

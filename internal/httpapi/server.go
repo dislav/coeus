@@ -95,14 +95,14 @@ func (s *Server) registerRoutes() {
 		}
 
 		// Questions — both roles; behavior splits inside the handler.
-		// POST and PATCH are expert-only via per-route RoleGuard (spec §4.4).
+		// POST and PUT are expert-only via per-route RoleGuard (spec §4.4).
 		questionHandler := handlers.NewQuestionHandler(s.questionRepo, s.sessionRepo, s.embedder)
 		questions := apiGroup.Group("/questions")
 		{
 			questions.GET("", questionHandler.List)
 			questions.GET("/:id", questionHandler.Get)
 			questions.POST("", RoleGuard("expert"), questionHandler.Create)
-			questions.PATCH("/:id", RoleGuard("expert"), questionHandler.Update)
+			questions.PUT("/:id", RoleGuard("expert"), questionHandler.Update)
 		}
 
 		// Expert image access — expert only (spec §4.5).

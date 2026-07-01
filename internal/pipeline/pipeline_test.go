@@ -192,7 +192,7 @@ func (r *fakeQuestionRepo) UpdateFromVerification(_ context.Context, id string, 
 func (r *fakeQuestionRepo) ListForSession(context.Context, string, string, int, int) ([]*storage.QuestionWithSession, error) {
 	return nil, nil
 }
-func (r *fakeQuestionRepo) UpdateByExpert(context.Context, string, []string, []string, string, float64, []string, string) error {
+func (r *fakeQuestionRepo) UpdateByExpert(context.Context, string, domain.QuestionUpdate, string) error {
 	return nil
 }
 func (r *fakeQuestionRepo) FindExpertByID(context.Context, string) (*storage.QuestionExpertView, error) {

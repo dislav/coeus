@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,7 +23,7 @@ type fakeQuestionRepo struct {
 	listModeration func(status, tag string, limit, off int) ([]*storage.QuestionExpertView, error)
 	listForSession func(sessionID, status string, limit, off int) ([]*storage.QuestionWithSession, error)
 	forUserByID    func(qid, uid string) (*storage.QuestionWithSession, error)
-	updateByExpert func(id string, answers, choices []string, explanation string, conf float64, tags []string, expertID string) error
+	updateByExpert func(id string, upd domain.QuestionUpdate, expertID string) error
 	create         func(ctx context.Context, q *domain.Question) (string, error)
 	createArg      *domain.Question
 	findExact      func(ctx context.Context, hash string) (*domain.Question, error)
@@ -67,13 +68,13 @@ func (f *fakeQuestionRepo) ListForSession(ctx context.Context, sid, st string, l
 func (f *fakeQuestionRepo) ListForModerationExpert(ctx context.Context, st, tag string, l, o int) ([]*storage.QuestionExpertView, error) {
 	return f.listModeration(st, tag, l, o)
 }
-func (f *fakeQuestionRepo) UpdateByExpert(ctx context.Context, id string, ans, ch []string, expl string, c float64, tags []string, eid string) error {
+func (f *fakeQuestionRepo) UpdateByExpert(ctx context.Context, id string, upd domain.QuestionUpdate, expertID string) error {
 	f.updateCalled = true
-	f.updateArgs.id, f.updateArgs.expertID = id, eid
-	f.updateArgs.answers, f.updateArgs.choices = ans, ch
-	f.updateArgs.explanation, f.updateArgs.conf, f.updateArgs.tags = expl, c, tags
+	f.updateArgs.id, f.updateArgs.expertID = id, expertID
+	f.updateArgs.answers, f.updateArgs.choices = upd.Answers, upd.Choices
+	f.updateArgs.explanation, f.updateArgs.conf, f.updateArgs.tags = upd.Explanation, upd.Confidence, upd.Tags
 	if f.updateByExpert != nil {
-		return f.updateByExpert(id, ans, ch, expl, c, tags, eid)
+		return f.updateByExpert(id, upd, expertID)
 	}
 	return nil
 }
@@ -128,7 +129,7 @@ func newQuestionRouterWithEmbedder(role, userID string, q storage.QuestionRepo, 
 	r.Use(func(c *gin.Context) { c.Set("role", role); c.Set("user_id", userID); c.Next() })
 	r.GET("/api/v1/questions", h.List)
 	r.GET("/api/v1/questions/:id", h.Get)
-	r.PATCH("/api/v1/questions/:id", h.Update)
+	r.PUT("/api/v1/questions/:id", h.Update)
 	r.POST("/api/v1/questions", h.Create)
 	return r
 }
@@ -287,7 +288,7 @@ func TestUpdate_ExpertSuccessCallsRepo(t *testing.T) {
 		},
 	}
 	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PATCH", "/api/v1/questions/q1", `{"status":"verified","answers":["X"],"choices":["X"]}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","answers":["X"],"choices":["X"]}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d want 200: %s", w.Code, w.Body.String())
 	}
@@ -304,7 +305,7 @@ func TestUpdate_ExpertSuccessCallsRepo(t *testing.T) {
 
 func TestUpdate_ExpertInvalidStatus400(t *testing.T) {
 	r := newQuestionRouter("expert", "e1", &fakeQuestionRepo{}, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PATCH", "/api/v1/questions/q1", `{"status":"moderation"}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"moderation"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("got %d want 400", w.Code)
 	}
@@ -312,12 +313,12 @@ func TestUpdate_ExpertInvalidStatus400(t *testing.T) {
 
 func TestUpdate_ExpertNotFound404(t *testing.T) {
 	q := &fakeQuestionRepo{
-		updateByExpert: func(string, []string, []string, string, float64, []string, string) error {
+		updateByExpert: func(string, domain.QuestionUpdate, string) error {
 			return domain.ErrNotFound
 		},
 	}
 	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PATCH", "/api/v1/questions/q1", `{"status":"verified","answers":["X"],"choices":["X"]}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","answers":["X"],"choices":["X"]}`)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d want 404", w.Code)
 	}
@@ -325,12 +326,12 @@ func TestUpdate_ExpertNotFound404(t *testing.T) {
 
 func TestUpdate_ExpertRepoError500(t *testing.T) {
 	q := &fakeQuestionRepo{
-		updateByExpert: func(string, []string, []string, string, float64, []string, string) error {
+		updateByExpert: func(string, domain.QuestionUpdate, string) error {
 			return errors.New("boom")
 		},
 	}
 	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PATCH", "/api/v1/questions/q1", `{"status":"verified","answers":["X"],"choices":["X"]}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","answers":["X"],"choices":["X"]}`)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("got %d want 500", w.Code)
 	}
@@ -360,7 +361,7 @@ func TestGet_ExpertRepoError500(t *testing.T) {
 
 func TestUpdate_ReFetchFallbackReturnsPartialBody(t *testing.T) {
 	q := &fakeQuestionRepo{
-		updateByExpert: func(string, []string, []string, string, float64, []string, string) error {
+		updateByExpert: func(string, domain.QuestionUpdate, string) error {
 			return nil
 		},
 		expertByID: func(string) (*storage.QuestionExpertView, error) {
@@ -368,7 +369,7 @@ func TestUpdate_ReFetchFallbackReturnsPartialBody(t *testing.T) {
 		},
 	}
 	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PATCH", "/api/v1/questions/q1", `{"status":"verified","answers":["X"],"choices":["X"]}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", validUpdateBody())
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d want 200", w.Code)
 	}
@@ -376,6 +377,99 @@ func TestUpdate_ReFetchFallbackReturnsPartialBody(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	if body["id"] != "q1" || body["status"] != "verified" {
 		t.Fatalf("unexpected partial body: %s", w.Body.String())
+	}
+}
+
+func TestUpdate_RejectsIncompletePayload400(t *testing.T) {
+	q := &fakeQuestionRepo{}
+	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
+	// {"status":"verified"} alone must NOT null out choices/answers.
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("incomplete payload: got %d want 400", w.Code)
+	}
+}
+
+func TestUpdate_AnswersNotSubsetOfChoices400(t *testing.T) {
+	r := newQuestionRouter("expert", "e1", &fakeQuestionRepo{}, &fakeQuestionSessionRepo{})
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","choices":["A","B"],"answers":["C"]}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("answers not in choices: got %d want 400", w.Code)
+	}
+	// Case-sensitive: "a" must not match choice "A".
+	w = doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","choices":["A"],"answers":["a"]}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("case-sensitive mismatch: got %d want 400", w.Code)
+	}
+}
+
+func TestUpdate_ConfidenceOutOfRange400(t *testing.T) {
+	r := newQuestionRouter("expert", "e1", &fakeQuestionRepo{}, &fakeQuestionSessionRepo{})
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","choices":["A"],"answers":["A"],"confidence":1.5}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("confidence > 1: got %d want 400", w.Code)
+	}
+
+	// confidence < 0 is also rejected.
+	w = doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","choices":["A"],"answers":["A"],"confidence":-0.5}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("confidence < 0: got %d want 400", w.Code)
+	}
+}
+
+func TestUpdate_TooManyTags400(t *testing.T) {
+	r := newQuestionRouter("expert", "e1", &fakeQuestionRepo{}, &fakeQuestionSessionRepo{})
+	// 21 tags => over the 20 limit.
+	tags := make([]string, 21)
+	for i := range tags {
+		tags[i] = "t"
+	}
+	body := fmt.Sprintf(`{"status":"moderation","choices":["A"],"answers":["A"],"tags":%s}`, asJSON(tags))
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("too many tags: got %d want 400", w.Code)
+	}
+}
+
+func TestUpdate_ConfidenceAbsentDefaultsToOne(t *testing.T) {
+	var gotConf float64
+	q := &fakeQuestionRepo{
+		updateByExpert: func(id string, upd domain.QuestionUpdate, expertID string) error {
+			gotConf = upd.Confidence
+			return nil
+		},
+		expertByID: func(string) (*storage.QuestionExpertView, error) {
+			return &storage.QuestionExpertView{Question: &domain.Question{ID: "q1", Status: domain.QuestionStatusVerified}}, nil
+		},
+	}
+	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","choices":["A"],"answers":["A"]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d want 200: %s", w.Code, w.Body.String())
+	}
+	if gotConf != 1.0 {
+		t.Errorf("default confidence: got %v want 1.0", gotConf)
+	}
+}
+
+func TestUpdate_ModerationStatusClearsVerification(t *testing.T) {
+	var got domain.QuestionUpdate
+	q := &fakeQuestionRepo{
+		updateByExpert: func(id string, upd domain.QuestionUpdate, expertID string) error {
+			got = upd
+			return nil
+		},
+		expertByID: func(string) (*storage.QuestionExpertView, error) {
+			return &storage.QuestionExpertView{Question: &domain.Question{ID: "q1", Status: domain.QuestionStatusModeration}}, nil
+		},
+	}
+	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"moderation","choices":["A"],"answers":["A"]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d want 200: %s", w.Code, w.Body.String())
+	}
+	if got.Status != domain.QuestionStatusModeration {
+		t.Errorf("status forwarded: got %q want moderation", got.Status)
 	}
 }
 
@@ -628,8 +722,17 @@ func TestCreate_MissingRequiredFields400(t *testing.T) {
 	}
 }
 
+func asJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
 // jsonFloat formats a float for inline JSON in table-ish tests.
 func jsonFloat(f float64) string {
 	b, _ := json.Marshal(f)
 	return string(b)
+}
+
+func validUpdateBody() string {
+	return `{"status":"verified","choices":["A","B"],"answers":["A"],"explanation":"e","tags":["t"],"confidence":0.9}`
 }

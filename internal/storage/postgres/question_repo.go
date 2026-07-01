@@ -227,7 +227,17 @@ func (r *QuestionRepo) FindForUserByID(ctx context.Context, questionID, userID s
 	return qws, nil
 }
 
-func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, answers, choices []string, explanation string, confidence float64, tags []string, expertID string) error {
+func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, upd domain.QuestionUpdate, expertID string) error {
+	// Defense-in-depth: normalize nil slices to empty so json.Marshal yields a
+	// real array, never null. Validation (handler) is the primary guard.
+	choices := upd.Choices
+	if choices == nil {
+		choices = []string{}
+	}
+	answers := upd.Answers
+	if answers == nil {
+		answers = []string{}
+	}
 	choicesJSON, _ := json.Marshal(choices)
 	answersJSON, _ := json.Marshal(answers)
 
@@ -237,12 +247,17 @@ func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, answers, c
 	}
 	defer tx.Rollback(ctx)
 
+	// status is no longer hard-coded; the verified_at/verified_by invariant
+	// (NOT NULL <=> status='verified') is enforced via CASE (spec §3.2.4).
 	tag, err := tx.Exec(ctx, `
 		UPDATE questions
 		SET answers = $1, choices = $2, explanation = $3, confidence = $4,
-		    status = 'verified', verified_at = now(), verified_by = $5, updated_at = now()
-		WHERE id = $6
-	`, answersJSON, choicesJSON, explanation, confidence, expertID, id)
+		    status = $5,
+		    verified_at = CASE WHEN $5 = 'verified' THEN now() ELSE NULL END,
+		    verified_by = CASE WHEN $5 = 'verified' THEN $6 ELSE NULL END,
+		    updated_at = now()
+		WHERE id = $7
+	`, answersJSON, choicesJSON, upd.Explanation, upd.Confidence, upd.Status, expertID, id)
 	if err != nil {
 		return fmt.Errorf("update by expert: %w", err)
 	}
@@ -250,10 +265,11 @@ func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, answers, c
 		return fmt.Errorf("update by expert: %w", domain.ErrNotFound)
 	}
 
+	// Tag delete-and-reinsert, same transaction.
 	if _, err := tx.Exec(ctx, `DELETE FROM question_tags WHERE question_id = $1`, id); err != nil {
 		return fmt.Errorf("clear tags: %w", err)
 	}
-	for _, tagName := range tags {
+	for _, tagName := range upd.Tags {
 		if err := r.linkTagTx(ctx, tx, id, tagName); err != nil {
 			return fmt.Errorf("link tag %q: %w", tagName, err)
 		}
@@ -276,7 +292,7 @@ func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, answers, c
 // the status flip. (CountUnresolvedForImage uses r.pool and can't be reused
 // here; the count SQL is inlined tx-scoped.)
 //
-// Best-effort under READ COMMITTED: two concurrent expert PATCHes on different
+// Best-effort under READ COMMITTED: two concurrent expert PUTs on different
 // questions sharing the same image may both see the other's question still
 // unresolved and both skip the byte null (benign — bytes retained until a
 // later resolution touches the image; no correctness/visibility impact).

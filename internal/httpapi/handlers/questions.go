@@ -277,7 +277,7 @@ func (h *QuestionHandler) Create(c *gin.Context) {
 	norm := domain.NormalizeQuestion(req.Question)
 	hash := domain.HashQuestion(norm)
 
-	// Exact-hash dedup. On hit, return the existing id inline so the expert can PATCH it.
+	// Exact-hash dedup. On hit, return the existing id inline so the expert can PUT it.
 	existing, err := h.questions.FindExact(c.Request.Context(), hash)
 	if err != nil {
 		slog.Error("manual question exact dedup failed",

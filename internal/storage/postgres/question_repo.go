@@ -465,25 +465,6 @@ func scanQuestion(row pgx.Row) (*domain.Question, error) {
 	return q, nil
 }
 
-func scanQuestionRow(rows pgx.Rows) (*domain.Question, error) {
-	q := &domain.Question{}
-	var choices, answers []byte
-	var verifiedAt, verifiedBy *string
-	err := rows.Scan(
-		&q.ID, &q.Number, &q.Text, &q.TextNorm, &q.TextHash,
-		&choices, &answers, &q.ChoiceLabeling,
-		&q.Confidence, &q.Explanation, &verifiedAt, &verifiedBy, &q.Status,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("scan question: %w", err)
-	}
-	json.Unmarshal(choices, &q.Choices)
-	json.Unmarshal(answers, &q.Answers)
-	q.VerifiedAt = verifiedAt
-	q.VerifiedBy = verifiedBy
-	return q, nil
-}
-
 // scanQuestionExpert scans the questionSelectBase columns plus image_id and has_report.
 // Accepts anything with a Scan(...) method (pgx.Row and pgx.Rows both qualify).
 func scanQuestionExpert(row interface {

@@ -68,8 +68,7 @@ type QuestionRepo interface {
 	FindExact(ctx context.Context, hash string) (*domain.Question, error)
 	FindSemantic(ctx context.Context, embedding []float32, threshold float64) (*domain.Question, error)
 	UpdateFromVerification(ctx context.Context, id string, confidence float64, explanation string) error
-	ListForUser(ctx context.Context, sessionID string, statusFilter string, limit, offset int) ([]*QuestionWithSession, error)
-	ListForModeration(ctx context.Context, statusFilter, tagFilter string, limit, offset int) ([]*domain.Question, error)
+	ListForSession(ctx context.Context, sessionID, statusFilter string, limit, offset int) ([]*QuestionWithSession, error)
 	UpdateByExpert(ctx context.Context, id string, answers []string, choices []string, explanation string, confidence float64, tags []string, expertID string) error
 	// Read-side projections for the HTTP surface.
 	FindExpertByID(ctx context.Context, id string) (*QuestionExpertView, error)

@@ -118,27 +118,21 @@ func (r *QuestionRepo) UpdateFromVerification(ctx context.Context, id string, co
 	return nil
 }
 
-func (r *QuestionRepo) ListForUser(ctx context.Context, sessionID string, statusFilter string, limit, offset int) ([]*storage.QuestionWithSession, error) {
-	query := `
-		SELECT q.id, q.number, q.question, q.choices, q.answers,
-		       q.choice_labeling, q.confidence, q.status,
-		       sq.session_id, sq.image_id, sq.extracted_number, sq.extracted_confidence
-		FROM session_questions sq
-		JOIN questions q ON q.id = sq.question_id
-		WHERE sq.session_id = $1`
+func (r *QuestionRepo) ListForSession(ctx context.Context, sessionID, statusFilter string, limit, offset int) ([]*storage.QuestionWithSession, error) {
+	query := questionWithSessionSelectBase + " WHERE sq.session_id = $1"
 	args := []interface{}{sessionID}
 	idx := 2
 	if statusFilter != "" {
-		query += fmt.Sprintf(` AND q.status = $%d`, idx)
+		query += fmt.Sprintf(" AND q.status = $%d", idx)
 		args = append(args, statusFilter)
 		idx++
 	}
-	query += fmt.Sprintf(` ORDER BY sq.extracted_number LIMIT $%d OFFSET $%d`, idx, idx+1)
+	query += fmt.Sprintf(" ORDER BY sq.extracted_number LIMIT $%d OFFSET $%d", idx, idx+1)
 	args = append(args, limit, offset)
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list questions for user: %w", err)
+		return nil, fmt.Errorf("list questions for session: %w", err)
 	}
 	defer rows.Close()
 
@@ -151,55 +145,9 @@ func (r *QuestionRepo) ListForUser(ctx context.Context, sessionID string, status
 		results = append(results, qws)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list questions for user: %w", err)
+		return nil, fmt.Errorf("list questions for session: %w", err)
 	}
 	return results, nil
-}
-
-func (r *QuestionRepo) ListForModeration(ctx context.Context, statusFilter, tagFilter string, limit, offset int) ([]*domain.Question, error) {
-	query := questionSelectBase
-	args := []interface{}{}
-	idx := 1
-	if tagFilter != "" {
-		query = `
-		SELECT DISTINCT q.id, q.number, q.question, q.question_normalized, q.question_hash,
-		       q.choices, q.answers, q.choice_labeling,
-		       q.confidence, q.explanation,
-		       to_char(q.verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-		       q.verified_by::text,
-		       q.status
-		FROM questions q JOIN question_tags qt ON qt.question_id = q.id JOIN tags t ON t.id = qt.tag_id`
-	}
-	query += fmt.Sprintf(` WHERE q.status = $%d`, idx)
-	args = append(args, statusFilter)
-	idx++
-	if tagFilter != "" {
-		query += fmt.Sprintf(` AND t.name = $%d`, idx)
-		args = append(args, tagFilter)
-		idx++
-	}
-	query += fmt.Sprintf(` ORDER BY q.created_at LIMIT $%d OFFSET $%d`, idx, idx+1)
-	args = append(args, limit, offset)
-
-	rows, err := r.pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list for moderation: %w", err)
-	}
-	defer rows.Close()
-
-	var questions []*domain.Question
-	for rows.Next() {
-		q, err := scanQuestionRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		q.Tags, _ = r.getTags(ctx, q.ID)
-		questions = append(questions, q)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list for moderation: %w", err)
-	}
-	return questions, nil
 }
 
 func (r *QuestionRepo) FindExpertByID(ctx context.Context, id string) (*storage.QuestionExpertView, error) {
@@ -219,13 +167,19 @@ func (r *QuestionRepo) ListForModerationExpert(ctx context.Context, statusFilter
 	query := questionExpertSelectBase
 	args := []interface{}{}
 	idx := 1
-	query += fmt.Sprintf(` WHERE q.status = $%d`, idx)
-	args = append(args, statusFilter)
-	idx++
+	if statusFilter != "" {
+		query += fmt.Sprintf(` WHERE q.status = $%d`, idx)
+		args = append(args, statusFilter)
+		idx++
+	}
 	if tagFilter != "" {
-		query += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM question_tags qt
+		where := " WHERE"
+		if statusFilter != "" {
+			where = " AND"
+		}
+		query += fmt.Sprintf(`%s EXISTS (SELECT 1 FROM question_tags qt
 			JOIN tags t ON t.id = qt.tag_id
-			WHERE qt.question_id = q.id AND t.name = $%d)`, idx)
+			WHERE qt.question_id = q.id AND t.name = $%d)`, where, idx)
 		args = append(args, tagFilter)
 		idx++
 	}
@@ -257,12 +211,7 @@ func (r *QuestionRepo) ListForModerationExpert(ctx context.Context, statusFilter
 // by userID (enforces ownership at the repo level; 404 otherwise). It reuses
 // QuestionWithSession and picks the earliest-linked session deterministically.
 func (r *QuestionRepo) FindForUserByID(ctx context.Context, questionID, userID string) (*storage.QuestionWithSession, error) {
-	query := `
-		SELECT q.id, q.number, q.question, q.choices, q.answers,
-		       q.choice_labeling, q.confidence, q.status,
-		       sq.session_id, sq.image_id, sq.extracted_number, sq.extracted_confidence
-		FROM session_questions sq
-		JOIN questions q ON q.id = sq.question_id
+	query := questionWithSessionSelectBase + `
 		JOIN sessions s ON s.id = sq.session_id
 		WHERE sq.question_id = $1 AND s.user_id = $2
 		ORDER BY sq.id
@@ -467,6 +416,20 @@ const questionExpertSelectBase = `
 	          WHERE sq.question_id = q.id ORDER BY sq.id LIMIT 1), false) AS has_verification_report
 	FROM questions q`
 
+// questionWithSessionSelectBase is the full question column set (matches
+// questionSelectBase) plus the session_questions link fields. Used by
+// ListForSession and FindForUserByID via scanQuestionWithSession.
+const questionWithSessionSelectBase = `
+	SELECT q.id, q.number, q.question, q.question_normalized, q.question_hash,
+	       q.choices, q.answers, q.choice_labeling,
+	       q.confidence, q.explanation,
+	       to_char(q.verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	       q.verified_by::text,
+	       q.status,
+	       sq.session_id, sq.image_id, sq.extracted_number, sq.extracted_confidence
+	FROM session_questions sq
+	JOIN questions q ON q.id = sq.question_id`
+
 func scanQuestion(row pgx.Row) (*domain.Question, error) {
 	q := &domain.Question{}
 	var choices, answers []byte
@@ -536,21 +499,25 @@ func scanQuestionExpert(row interface {
 	return ev, nil
 }
 
-// scanQuestionWithSession scans the 13-column SELECT used by ListForUser and
-// FindForUserByID. Accepts both pgx.Row and pgx.Rows.
+// scanQuestionWithSession scans the 17 columns (13 question + 4 link fields)
+// used by ListForSession and FindForUserByID. Accepts both pgx.Row and pgx.Rows.
 func scanQuestionWithSession(row interface {
 	Scan(dest ...any) error
 }) (*storage.QuestionWithSession, error) {
 	qws := &storage.QuestionWithSession{Question: &domain.Question{}}
 	var choices, answers []byte
+	var verifiedAt, verifiedBy *string
 	if err := row.Scan(
-		&qws.ID, &qws.Number, &qws.Text,
-		&choices, &answers, &qws.ChoiceLabeling, &qws.Confidence, &qws.Status,
+		&qws.ID, &qws.Number, &qws.Text, &qws.TextNorm, &qws.TextHash,
+		&choices, &answers, &qws.ChoiceLabeling,
+		&qws.Confidence, &qws.Explanation, &verifiedAt, &verifiedBy, &qws.Status,
 		&qws.SessionID, &qws.ImageID, &qws.ExtractedNumber, &qws.ExtractedConfidence,
 	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scan question with session: %w", err)
 	}
-	json.Unmarshal(choices, &qws.Choices)
-	json.Unmarshal(answers, &qws.Answers)
+	_ = json.Unmarshal(choices, &qws.Choices)
+	_ = json.Unmarshal(answers, &qws.Answers)
+	qws.VerifiedAt = verifiedAt
+	qws.VerifiedBy = verifiedBy
 	return qws, nil
 }

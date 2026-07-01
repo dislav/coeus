@@ -189,10 +189,7 @@ func (r *fakeQuestionRepo) UpdateFromVerification(_ context.Context, id string, 
 	r.updatedFromVer = append(r.updatedFromVer, struct{ id string; conf float64; expl string }{id, c, e})
 	return nil
 }
-func (r *fakeQuestionRepo) ListForUser(context.Context, string, string, int, int) ([]*storage.QuestionWithSession, error) {
-	return nil, nil
-}
-func (r *fakeQuestionRepo) ListForModeration(context.Context, string, string, int, int) ([]*domain.Question, error) {
+func (r *fakeQuestionRepo) ListForSession(context.Context, string, string, int, int) ([]*storage.QuestionWithSession, error) {
 	return nil, nil
 }
 func (r *fakeQuestionRepo) UpdateByExpert(context.Context, string, []string, []string, string, float64, []string, string) error {

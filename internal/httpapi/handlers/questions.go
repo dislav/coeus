@@ -43,64 +43,82 @@ func parsePaging(c *gin.Context) (page, perPage, offset int) {
 	return page, perPage, (page - 1) * perPage
 }
 
-// List — GET /api/v1/questions. Behavior splits by role.
+// List — GET /api/v1/questions. session_id drives scoping; role drives only
+// authorization and response shape (spec §3.1).
 func (h *QuestionHandler) List(c *gin.Context) {
 	role := c.GetString("role")
 	page, perPage, offset := parsePaging(c)
 
-	if role == roleExpert {
-		status := c.DefaultQuery("status", domain.QuestionStatusModeration)
-		if status != domain.QuestionStatusModeration && status != domain.QuestionStatusError {
-			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+	// Shared status validation runs BEFORE the role split (spec §3.1.2).
+	status := c.Query("status")
+	if status != "" &&
+		status != domain.QuestionStatusModeration &&
+		status != domain.QuestionStatusVerified &&
+		status != domain.QuestionStatusError {
+		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+		return
+	}
+
+	sessionID := c.Query("session_id")
+	userID := c.GetString("user_id")
+
+	if sessionID != "" {
+		// Session-scoped read path, shared by both roles.
+		sess, err := h.sessions.FindByID(c.Request.Context(), sessionID)
+		if err != nil {
+			// Session genuinely missing => 404 (spec §3.1.4).
+			c.JSON(http.StatusNotFound, errorResponse(domain.ErrNotFound))
 			return
 		}
-		tag := c.Query("tag")
-		items, err := h.questions.ListForModerationExpert(c.Request.Context(), status, tag, perPage, offset)
+		// Ownership: user must own the session (403 on mismatch); expert exempt.
+		if role != roleExpert && sess.UserID != userID {
+			c.JSON(http.StatusForbidden, errorResponse(domain.ErrForbidden))
+			return
+		}
+		// Expiry gate applies to the user role only (experts may inspect any session).
+		if role != roleExpert {
+			if sess.Status != domain.SessionStatusOpen {
+				c.JSON(http.StatusGone, errorResponse(domain.ErrSessionExpired))
+				return
+			}
+			expiresAt, err := time.Parse(time.RFC3339, sess.ExpiresAt)
+			if err != nil || time.Now().After(expiresAt) {
+				c.JSON(http.StatusGone, errorResponse(domain.ErrSessionExpired))
+				return
+			}
+		}
+
+		items, err := h.questions.ListForSession(c.Request.Context(), sessionID, status, perPage, offset)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, errorResponse(err))
 			return
 		}
 		data := make([]any, 0, len(items))
 		for _, q := range items {
-			data = append(data, toExpertResponse(q))
+			if role == roleExpert {
+				data = append(data, toExpertResponseFromSession(q))
+			} else {
+				data = append(data, toUserResponse(q))
+			}
 		}
 		c.JSON(http.StatusOK, dto.QuestionListResponse{Data: data, Page: page, PerPage: perPage})
 		return
 	}
 
-	// user role
-	sessionID := c.Query("session_id")
-	if sessionID == "" {
-		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+	// No session_id: experts get the global queue; users are forbidden (403).
+	if role != roleExpert {
+		c.JSON(http.StatusForbidden, errorResponse(domain.ErrForbidden))
 		return
 	}
-	userID := c.GetString("user_id")
-
-	// Inline SessionWindow-equivalent check (session_id is a query param here,
-	// so the path-param SessionWindow middleware cannot be reused — plan Decision #1).
-	sess, err := h.sessions.FindByID(c.Request.Context(), sessionID)
-	if err != nil || sess.UserID != userID {
-		c.JSON(http.StatusNotFound, errorResponse(domain.ErrNotFound))
-		return
-	}
-	if sess.Status != domain.SessionStatusOpen {
-		c.JSON(http.StatusGone, errorResponse(domain.ErrSessionExpired))
-		return
-	}
-	expiresAt, err := time.Parse(time.RFC3339, sess.ExpiresAt)
-	if err != nil || time.Now().After(expiresAt) {
-		c.JSON(http.StatusGone, errorResponse(domain.ErrSessionExpired))
-		return
-	}
-
-	items, err := h.questions.ListForUser(c.Request.Context(), sessionID, c.Query("status"), perPage, offset)
+	tag := c.Query("tag")
+	items, err := h.questions.ListForModerationExpert(c.Request.Context(), status, tag, perPage, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
 	data := make([]any, 0, len(items))
 	for _, q := range items {
-		data = append(data, toUserResponse(q))
+		data = append(data, toExpertResponse(q))
 	}
 	c.JSON(http.StatusOK, dto.QuestionListResponse{Data: data, Page: page, PerPage: perPage})
 }
@@ -321,6 +339,33 @@ func toExpertResponse(ev *storage.QuestionExpertView) dto.ExpertQuestionResponse
 		HasVerificationReport: ev.HasVerificationReport,
 		VerifiedAt:            q.VerifiedAt,
 		VerifiedBy:            q.VerifiedBy,
+	}
+	if resp.Tags == nil {
+		resp.Tags = []string{}
+	}
+	return resp
+}
+
+// toExpertResponseFromSession builds the expert DTO from the session-scoped read
+// (QuestionWithSession). HasVerificationReport is not available on this path
+// (it is a moderation-queue convenience) and defaults to false.
+func toExpertResponseFromSession(qws *storage.QuestionWithSession) dto.ExpertQuestionResponse {
+	q := qws.Question
+	resp := dto.ExpertQuestionResponse{
+		ID:              q.ID,
+		Number:          qws.ExtractedNumber,
+		Question:        q.Text,
+		MultipleCorrect: q.MultipleCorrect(),
+		Choices:         q.Choices,
+		Answers:         q.Answers,
+		ChoiceLabeling:  q.ChoiceLabeling,
+		Confidence:      q.Confidence,
+		Explanation:     q.Explanation,
+		Tags:            q.Tags,
+		Status:          q.Status,
+		ImageID:         qws.ImageID,
+		VerifiedAt:      q.VerifiedAt,
+		VerifiedBy:      q.VerifiedBy,
 	}
 	if resp.Tags == nil {
 		resp.Tags = []string{}

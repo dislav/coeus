@@ -20,7 +20,7 @@ import (
 type fakeQuestionRepo struct {
 	expertByID     func(id string) (*storage.QuestionExpertView, error)
 	listModeration func(status, tag string, limit, off int) ([]*storage.QuestionExpertView, error)
-	listForUser    func(sessionID, status string, limit, off int) ([]*storage.QuestionWithSession, error)
+	listForSession func(sessionID, status string, limit, off int) ([]*storage.QuestionWithSession, error)
 	forUserByID    func(qid, uid string) (*storage.QuestionWithSession, error)
 	updateByExpert func(id string, answers, choices []string, explanation string, conf float64, tags []string, expertID string) error
 	create         func(ctx context.Context, q *domain.Question) (string, error)
@@ -58,10 +58,10 @@ func (f *fakeQuestionRepo) FindSemantic(context.Context, []float32, float64) (*d
 func (f *fakeQuestionRepo) UpdateFromVerification(context.Context, string, float64, string) error {
 	return nil
 }
-func (f *fakeQuestionRepo) ListForUser(ctx context.Context, sid, st string, l, o int) ([]*storage.QuestionWithSession, error) {
-	return f.listForUser(sid, st, l, o)
-}
-func (f *fakeQuestionRepo) ListForModeration(context.Context, string, string, int, int) ([]*domain.Question, error) {
+func (f *fakeQuestionRepo) ListForSession(ctx context.Context, sid, st string, l, o int) ([]*storage.QuestionWithSession, error) {
+	if f.listForSession != nil {
+		return f.listForSession(sid, st, l, o)
+	}
 	return nil, nil
 }
 func (f *fakeQuestionRepo) ListForModerationExpert(ctx context.Context, st, tag string, l, o int) ([]*storage.QuestionExpertView, error) {
@@ -98,7 +98,10 @@ func (f *fakeQuestionSessionRepo) ListByUser(context.Context, string, int, int) 
 }
 func (f *fakeQuestionSessionRepo) Close(context.Context, string) error { return nil }
 func (f *fakeQuestionSessionRepo) FindByID(ctx context.Context, id string) (*domain.Session, error) {
-	return f.byID(id)
+	if f.byID != nil {
+		return f.byID(id)
+	}
+	return nil, domain.ErrNotFound
 }
 
 type fakeEmbedder struct {
@@ -146,11 +149,11 @@ func doReq(t *testing.T, r http.Handler, method, target, body string) *httptest.
 
 // --- tests ---
 
-func TestList_UserRoleRequiresSessionID(t *testing.T) {
+func TestList_UserRoleWithoutSessionForbidden403(t *testing.T) {
 	r := newQuestionRouter("user", "u1", &fakeQuestionRepo{}, &fakeQuestionSessionRepo{})
 	w := doReq(t, r, "GET", "/api/v1/questions", "")
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("missing session_id: got %d want 400", w.Code)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("user without session_id: got %d want 403", w.Code)
 	}
 }
 
@@ -165,55 +168,64 @@ func TestList_UserRoleExpiredSession410(t *testing.T) {
 	}
 }
 
-func TestList_UserRoleNotOwner404(t *testing.T) {
+func TestList_UserRoleNotOwnerForbidden403(t *testing.T) {
 	s := &fakeQuestionSessionRepo{byID: func(string) (*domain.Session, error) {
 		return &domain.Session{UserID: "other", Status: "open", ExpiresAt: "2999-01-01T00:00:00Z"}, nil
 	}}
 	r := newQuestionRouter("user", "u1", &fakeQuestionRepo{}, s)
 	w := doReq(t, r, "GET", "/api/v1/questions?session_id=s1", "")
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("not owner: got %d want 404", w.Code)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("not owner: got %d want 403", w.Code)
 	}
 }
 
-func TestList_ExpertModerationDefaultAndFilter(t *testing.T) {
+func TestList_UserRoleSessionMissing404(t *testing.T) {
+	s := &fakeQuestionSessionRepo{byID: func(string) (*domain.Session, error) {
+		return nil, domain.ErrNotFound
+	}}
+	r := newQuestionRouter("user", "u1", &fakeQuestionRepo{}, s)
+	w := doReq(t, r, "GET", "/api/v1/questions?session_id=s1", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("session missing: got %d want 404", w.Code)
+	}
+}
+
+func TestList_ExpertGlobalQueueAllStatusesAndFilter(t *testing.T) {
+	var gotStatus, gotTag string
 	q := &fakeQuestionRepo{
 		listModeration: func(status, tag string, limit, off int) ([]*storage.QuestionExpertView, error) {
-			if status != "moderation" {
-				t.Errorf("default status: got %q want moderation", status)
-			}
+			gotStatus, gotTag = status, tag
 			return []*storage.QuestionExpertView{{Question: &domain.Question{ID: "q1"}, ImageID: "img1"}}, nil
 		},
 	}
 	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
+
+	// No status param => no filter (empty status forwarded), all statuses.
 	w := doReq(t, r, "GET", "/api/v1/questions", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d want 200: %s", w.Code, w.Body.String())
 	}
-	var resp struct {
-		Data []map[string]any `json:"data"`
-	}
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	if len(resp.Data) != 1 || resp.Data[0]["image_id"] != "img1" {
-		t.Fatalf("unexpected body: %s", w.Body.String())
+	if gotStatus != "" {
+		t.Errorf("default status: got %q want empty (all statuses)", gotStatus)
 	}
 
-	// tag filter path
-	var gotTag string
-	q.listModeration = func(status, tag string, limit, off int) ([]*storage.QuestionExpertView, error) {
-		gotTag = tag
-		return nil, nil
+	// Explicit status filter is forwarded.
+	_ = doReq(t, r, "GET", "/api/v1/questions?status=moderation", "")
+	if gotStatus != "moderation" {
+		t.Errorf("status filter: got %q want moderation", gotStatus)
 	}
+
+	// Tag filter is forwarded.
 	_ = doReq(t, r, "GET", "/api/v1/questions?tag=chemistry", "")
 	if gotTag != "chemistry" {
-		t.Fatalf("tag filter: got %q want chemistry", gotTag)
+		t.Errorf("tag filter: got %q want chemistry", gotTag)
 	}
 }
 
 func TestList_UserRoleForwardsStatusParam(t *testing.T) {
 	var gotStatus string
 	q := &fakeQuestionRepo{
-		listForUser: func(sessionID, status string, l, o int) ([]*storage.QuestionWithSession, error) {
+		listForSession: func(sessionID, status string, l, o int) ([]*storage.QuestionWithSession, error) {
 			gotStatus = status
 			return nil, nil
 		},
@@ -385,6 +397,64 @@ func TestList_ExpertPagingBoundsResetToDefault(t *testing.T) {
 	_ = doReq(t, r, "GET", "/api/v1/questions?per_page=0", "")
 	if gotLimit != 20 {
 		t.Fatalf("per_page=0: got limit %d want 20", gotLimit)
+	}
+}
+
+func TestList_InvalidStatus400BothRoles(t *testing.T) {
+	// The user role resolves the session (h.sessions.FindByID) before building
+	// a response, so the fake MUST supply a valid OWNED session — UserID equal
+	// to the authenticated "x", status open, far-future expiry. Otherwise byID
+	// is nil and the fake dereferences a nil func, panicking before the request
+	// can reach the shared status validation. The expert role is exempt from the
+	// ownership/expiry gates but uses the same session repo, so this session is
+	// harmless for it.
+	owned := &fakeQuestionSessionRepo{byID: func(string) (*domain.Session, error) {
+		return &domain.Session{
+			UserID:    "x",
+			Status:    domain.SessionStatusOpen,
+			ExpiresAt: "2999-01-01T00:00:00Z",
+		}, nil
+	}}
+
+	// Invalid status must be 400 for BOTH roles on the session-scoped path.
+	for _, role := range []string{"user", "expert"} {
+		r := newQuestionRouter(role, "x", &fakeQuestionRepo{}, owned)
+		w := doReq(t, r, "GET", "/api/v1/questions?session_id=s1&status=bogus", "")
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: invalid status (session-scoped) got %d, want 400", role, w.Code)
+		}
+	}
+
+	// Expert on the global-queue path (no session_id) hits the shared status
+	// validation directly; no session repo is consulted.
+	r := newQuestionRouter("expert", "e1", &fakeQuestionRepo{}, &fakeQuestionSessionRepo{})
+	w := doReq(t, r, "GET", "/api/v1/questions?status=bogus", "")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expert invalid status (global queue): got %d want 400", w.Code)
+	}
+}
+
+func TestList_ExpertSessionScopedUsesListForSession(t *testing.T) {
+	called := false
+	q := &fakeQuestionRepo{
+		listForSession: func(sid, st string, l, o int) ([]*storage.QuestionWithSession, error) {
+			called = true
+			if sid != "s1" {
+				t.Errorf("session id: got %q want s1", sid)
+			}
+			return []*storage.QuestionWithSession{{Question: &domain.Question{ID: "q1", Status: "verified"}, ImageID: "img1"}}, nil
+		},
+	}
+	s := &fakeQuestionSessionRepo{byID: func(string) (*domain.Session, error) {
+		return &domain.Session{UserID: "e1", Status: "open", ExpiresAt: "2999-01-01T00:00:00Z"}, nil
+	}}
+	r := newQuestionRouter("expert", "e1", q, s)
+	w := doReq(t, r, "GET", "/api/v1/questions?session_id=s1", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d want 200: %s", w.Code, w.Body.String())
+	}
+	if !called {
+		t.Fatal("expert session-scoped request did not call ListForSession")
 	}
 }
 

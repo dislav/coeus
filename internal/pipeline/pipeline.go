@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
+	"time"
 
 	"github.com/vlgrigoriev/coeus/internal/config"
 	"github.com/vlgrigoriev/coeus/internal/domain"
@@ -22,6 +24,27 @@ type Pipeline struct {
 	embedder  AIEmbedder
 	cfg       config.PipelineConfig
 	log       *slog.Logger
+	backoff   func(attempt int) time.Duration
+}
+
+const (
+	backoffBase = 1 * time.Second
+	backoffCap  = 8 * time.Second
+)
+
+// defaultBackoff returns a jittered exponential backoff for the given attempt
+// (1-based). Base 1s, factor 2, cap 8s → centers 1s, 2s, 4s, 8s, 8s..., each
+// with ±20% uniform jitter. Pure (no I/O); injectable via Pipeline.backoff.
+func defaultBackoff(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	d := backoffBase << (attempt - 1) // base * 2^(attempt-1)
+	if d > backoffCap || d < 0 {
+		d = backoffCap
+	}
+	factor := 0.8 + rand.Float64()*0.4 // [0.8, 1.2)
+	return time.Duration(float64(d) * factor)
 }
 
 func NewPipeline(
@@ -41,7 +64,7 @@ func NewPipeline(
 	return &Pipeline{
 		images: images, questions: questions, jobs: jobs,
 		enhancer: enhancer, extractor: extractor, verifier: verifier, embedder: embedder,
-		cfg: cfg, log: log,
+		cfg: cfg, log: log, backoff: defaultBackoff,
 	}
 }
 
@@ -237,18 +260,32 @@ func (p *Pipeline) extractWithRetries(ctx context.Context, image []byte, mime st
 		if lastErr == nil && result.Error == nil {
 			return result, nil
 		}
+
+		retry := false
 		if lastErr == nil && result.Error != nil {
 			switch result.Error.Code {
 			case ExtractionCodePartial:
-				return result, nil
+				return result, nil // terminal
 			case ExtractionCodeUnreadableImage, ExtractionCodeNoQuestions:
 				p.log.Warn("extract retryable failure", "attempt", attempt, "code", result.Error.Code)
-				continue
+				retry = true
 			default:
-				return result, nil
+				return result, nil // terminal
 			}
+		} else {
+			p.log.Warn("extract error", "attempt", attempt, "error", lastErr)
+			retry = true
 		}
-		p.log.Warn("extract error", "attempt", attempt, "error", lastErr)
+
+		if !retry || attempt == p.cfg.ExtractMaxAttempts {
+			break
+		}
+
+		select {
+		case <-time.After(p.backoff(attempt)):
+		case <-ctx.Done():
+			return result, ctx.Err()
+		}
 	}
 	if lastErr != nil {
 		return result, lastErr

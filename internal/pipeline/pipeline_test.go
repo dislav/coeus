@@ -53,6 +53,24 @@ func (f *fakeExtractor) Extract(ctx context.Context, _ []byte, _ string) (Extrac
 	return f.result, f.err
 }
 
+// flakyExtractor fails the first failN attempts with a transport error, then
+// succeeds. Used to exercise retry spacing and backoff.
+type flakyExtractor struct {
+	failN int
+	calls int
+}
+
+func (f *flakyExtractor) Extract(ctx context.Context, _ []byte, _ string) (ExtractResult, error) {
+	f.calls++
+	if ctx.Err() != nil {
+		return ExtractResult{}, ctx.Err()
+	}
+	if f.calls <= f.failN {
+		return ExtractResult{}, errors.New("transport error")
+	}
+	return ExtractResult{Questions: sampleQuestions()[:1]}, nil
+}
+
 type fakeVerifier struct {
 	result VerifyResult
 	err    error
@@ -245,6 +263,7 @@ func testPipeline(enh ImageEnhancer, ext AIExtractor, ver AIVerifier, emb AIEmbe
 	jq := newFakeJobQueue()
 	p := NewPipeline(imgRepo, qRepo, jq, enh, ext, ver, emb,
 		config.PipelineConfig{ExtractMaxAttempts: 3, SemanticThreshold: 0.92}, quietLogger())
+	p.backoff = func(int) time.Duration { return 0 }
 	return p, imgRepo, qRepo, jq
 }
 
@@ -511,5 +530,72 @@ func TestPipeline_AIGeneratedTag(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("new question should have ai-generated tag, tags=%v", q.Tags)
+	}
+}
+
+func TestDefaultBackoff_Bounds(t *testing.T) {
+	// base=1s, factor=2, cap=8s: centers are 1s, 2s, 4s, 8s, 8s... with ±20% jitter.
+	for attempt := 1; attempt <= 6; attempt++ {
+		d := defaultBackoff(attempt)
+		var center time.Duration
+		if attempt >= 4 {
+			center = 8 * time.Second
+		} else {
+			center = time.Duration(1<<(attempt-1)) * time.Second // 1s, 2s, 4s
+		}
+		lo := time.Duration(float64(center) * 0.8)
+		hi := time.Duration(float64(center) * 1.2)
+		if d < lo || d > hi {
+			t.Errorf("attempt %d: backoff = %v, want within [%v, %v]", attempt, d, lo, hi)
+		}
+	}
+}
+
+func TestExtractWithRetries_BackoffSpacing(t *testing.T) {
+	ext := &flakyExtractor{failN: 2} // succeeds on attempt 3
+	p, _, _, _ := testPipeline(&fakeEnhancer{}, ext, &fakeVerifier{}, &fakeEmbedder{embedding: []float32{0.1}})
+	p.backoff = func(int) time.Duration { return 1 * time.Millisecond }
+
+	start := time.Now()
+	res, err := p.extractWithRetries(context.Background(), []byte("img"), "image/png")
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("expected success after 3 attempts, got err: %v", err)
+	}
+	if ext.calls != 3 {
+		t.Errorf("calls = %d, want 3", ext.calls)
+	}
+	if len(res.Questions) != 1 {
+		t.Errorf("questions = %d, want 1", len(res.Questions))
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("elapsed = %v, want < 100ms (injected 1ms backoff × 2 sleeps)", elapsed)
+	}
+}
+
+func TestExtractWithRetries_BackoffAbortsOnCancel(t *testing.T) {
+	ext := &flakyExtractor{failN: 100} // always fails
+	p, _, _, _ := testPipeline(&fakeEnhancer{}, ext, &fakeVerifier{}, &fakeEmbedder{embedding: []float32{0.1}})
+	p.backoff = func(int) time.Duration { return 1 * time.Second }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := p.extractWithRetries(ctx, []byte("img"), "image/png")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected ctx error, got nil")
+	}
+	if ext.calls > 2 {
+		t.Errorf("calls = %d, want <= 2 (should abort during first backoff sleep)", ext.calls)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("elapsed = %v, want < 500ms (abort during first 1s sleep)", elapsed)
 	}
 }

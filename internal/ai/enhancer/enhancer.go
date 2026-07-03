@@ -44,31 +44,35 @@ func (e *Enhancer) Enhance(ctx context.Context, original []byte, mime string) ([
 		return nil, fmt.Errorf("enhance: auto-rotate: %w", err)
 	}
 
-	// +15% contrast, pivoting around mid-gray 128:
-	// 1.15 * (in - 128) + 128 = 1.15*in - 19.2
-	if err := img.Linear1(1.15, -19.2); err != nil {
+	if err := img.ThumbnailWithSize(1000, 1000, vips.InterestingNone, vips.SizeDown); err != nil {
+		return nil, fmt.Errorf("enhance: resize: %w", err)
+	}
+
+	if err := img.Modulate(1.25, 0.0, 0.0); err != nil {
+		return nil, fmt.Errorf("enhance: modulate: %w", err)
+	}
+
+	if err := img.ExtractBand(0, 1); err != nil {
+		return nil, fmt.Errorf("enhance: extract band: %w", err)
+	}
+
+	if err := img.Linear1(2.0, -250); err != nil {
 		return nil, fmt.Errorf("enhance: contrast: %w", err)
 	}
 
-	// Gamma 1.15 brightens midtones (govips: out = in^(1/exponent), >1 brightens).
-	if err := img.Gamma(1.15); err != nil {
-		return nil, fmt.Errorf("enhance: gamma: %w", err)
-	}
-
-	// Mild sharpen for text edge crispness (sigma=0.5, x1=1.0, m2=2.0).
-	if err := img.Sharpen(0.5, 1.0, 2.0); err != nil {
+	if err := img.Sharpen(1.25, 2.0, 2.5); err != nil {
 		return nil, fmt.Errorf("enhance: sharpen: %w", err)
 	}
 
 	switch mime {
 	case "image/jpeg":
-		buf, _, err := img.ExportJpeg(&vips.JpegExportParams{Quality: 92})
+		buf, _, err := img.ExportJpeg(&vips.JpegExportParams{Quality: 40})
 		return buf, err
 	case "image/png":
-		buf, _, err := img.ExportPng(&vips.PngExportParams{Compression: 6})
+		buf, _, err := img.ExportPng(&vips.PngExportParams{Compression: 7})
 		return buf, err
 	case "image/webp":
-		buf, _, err := img.ExportWebp(&vips.WebpExportParams{Quality: 92})
+		buf, _, err := img.ExportWebp(&vips.WebpExportParams{Quality: 40})
 		return buf, err
 	default:
 		return nil, fmt.Errorf("enhance: unsupported MIME %q", mime)

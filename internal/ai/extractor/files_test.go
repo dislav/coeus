@@ -21,6 +21,8 @@ func TestFilenameForMime(t *testing.T) {
 		{"image/webp", "image.webp"},
 		{"image/gif", "image.bin"}, // unknown → default
 		{"", "image.bin"},
+		{"IMAGE/PNG", "image.png"},
+		{" image/jpeg ", "image.jpg"},
 	}
 	for _, tt := range tests {
 		if got := filenameForMime(tt.mime); got != tt.want {
@@ -117,6 +119,20 @@ func TestDeleteFile_Isolation(t *testing.T) {
 	}
 	if gotAuth != "Bearer test-key" {
 		t.Errorf("auth = %q, want Bearer test-key", gotAuth)
+	}
+}
+
+func TestUploadImage_EmptyIDIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "", "status": "ready"})
+	}))
+	defer srv.Close()
+
+	e := New(testCfg(srv.URL, 10*time.Second), quietLogger())
+	_, err := e.uploadImage(context.Background(), []byte("x"), "image/png")
+	if err == nil {
+		t.Fatal("expected error for empty file id, got nil")
 	}
 }
 

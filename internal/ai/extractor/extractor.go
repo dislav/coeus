@@ -39,7 +39,7 @@ func New(cfg config.VisionConfig, log *slog.Logger) *Extractor {
 	return &Extractor{
 		client:     oai.NewClient(cfg.BaseURL, cfg.APIKey, cfg.Timeout),
 		model:      cfg.Model,
-		baseURL:    cfg.BaseURL,
+		baseURL:    strings.TrimSuffix(cfg.BaseURL, "/"),
 		apiKey:     cfg.APIKey,
 		httpClient: &http.Client{Timeout: cfg.Timeout},
 		thinking:   cfg.Thinking,

@@ -28,7 +28,9 @@ func filenameForMime(mime string) string {
 
 // uploadImage POSTs the raw image bytes to {baseURL}/files as multipart
 // form-data with purpose=image and returns the Moonshot file id. Any non-2xx
-// response is returned as a transport error so the pipeline retries it.
+// response is returned as an error; the pipeline treats all such errors as
+// transport-class (retried) — see design §4.3 (terminal 4xx are practically
+// unreachable: auth is validated at startup, payload is well under the limit).
 func (e *Extractor) uploadImage(ctx context.Context, image []byte, mime string) (string, error) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)

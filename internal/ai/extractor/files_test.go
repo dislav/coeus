@@ -137,9 +137,8 @@ func TestUploadImage_EmptyIDIsError(t *testing.T) {
 }
 
 func TestExtractor_CleanupOnCancelDeleteStillRuns(t *testing.T) {
-	t.Skip("deferred to Task 3 — Extract rewrite")
-
 	var deleteCalls int
+	stopCh := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/files" && r.Method == http.MethodPost:
@@ -149,12 +148,17 @@ func TestExtractor_CleanupOnCancelDeleteStillRuns(t *testing.T) {
 			deleteCalls++
 			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/chat/completions" && r.Method == http.MethodPost:
-			<-r.Context().Done() // block until the client tears the request down
+			// Block until either the client disconnects or test cleanup signals.
+			select {
+			case <-r.Context().Done():
+			case <-stopCh:
+			}
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer srv.Close()
+	defer close(stopCh)
 
 	e := New(testCfg(srv.URL, 30*time.Second), quietLogger())
 	ctx, cancel := context.WithCancel(context.Background())
@@ -172,6 +176,6 @@ func TestExtractor_CleanupOnCancelDeleteStillRuns(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if deleteCalls == 0 {
-		t.Fatal("DELETE /v1/files/{id} should run even after caller ctx cancel (via WithoutCancel)")
+		t.Fatal("DELETE /files/{id} should run even after caller ctx cancel (via WithoutCancel)")
 	}
 }

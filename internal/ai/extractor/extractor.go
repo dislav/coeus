@@ -1,16 +1,16 @@
 // Package extractor implements pipeline.AIExtractor using a vision LLM via the
 // OpenAI-compatible Chat Completions API (Moonshot/Kimi by default). The image
-// is sent as a base64 data URL in a multimodal user message.
+// is uploaded to Moonshot Files and referenced as ms://<file_id>.
 package extractor
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/shared"
@@ -47,12 +47,14 @@ func New(cfg config.VisionConfig, log *slog.Logger) *Extractor {
 	}
 }
 
-// Extract sends the image to the vision model and returns an ExtractResult.
+// Extract uploads the image, sends it to the vision model as an ms:// reference,
+// and returns an ExtractResult. The uploaded file is deleted (best-effort) on
+// return.
 //
 // Return-shape contract (consumed by pipeline.extractWithRetries):
-//   - transport failure (HTTP/network/timeout)      → (zero, err)        [retried]
-//   - content failure (Error != nil in model JSON) → (result, nil)      [by code]
-//   - success                                       → (result, nil)
+//   - transport failure (upload error, HTTP/network/timeout, JSON parse)  → (zero, err)   [retried]
+//   - content failure (Error != nil in model JSON)                       → (result, nil) [by code]
+//   - success                                                            → (result, nil)
 //
 // "parse model JSON" failure is treated as transport-class so the pipeline
 // retries — a prose-wrapped response may succeed on the next attempt.
@@ -61,7 +63,21 @@ func (e *Extractor) Extract(ctx context.Context, image []byte, mime string) (pip
 		return pipeline.ExtractResult{}, fmt.Errorf("extract: %w", err)
 	}
 
-	dataURL := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(image)
+	fileID, err := e.uploadImage(ctx, image, mime)
+	if err != nil {
+		return pipeline.ExtractResult{}, fmt.Errorf("extract: upload: %w", err)
+	}
+	defer func() {
+		// Cleanup context decoupled from caller cancellation so a cancelled
+		// request cannot leak the uploaded file, but bounded to 5s because the
+		// DELETE travels through the same lossy proxy that may reset it.
+		delCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := e.deleteFile(delCtx, fileID); err != nil {
+			e.log.Warn("delete uploaded file", "file_id", fileID, "error", err)
+		}
+	}()
+
 	userText := "Extract all questions from this exam image. Respond as a JSON object matching this schema:\n\n" + extractionSchemaJSON
 
 	rf := shared.NewResponseFormatJSONObjectParam()
@@ -71,12 +87,20 @@ func (e *Extractor) Extract(ctx context.Context, image []byte, mime string) (pip
 			openai.SystemMessage(systemPrompt),
 			openai.UserMessage([]openai.ChatCompletionContentPartUnionParam{
 				openai.TextContentPart("```schema\n" + userText + "\n```\n\nNow extract from this image:"),
-				imageURLPart(dataURL),
+				imageURLPart("ms://" + fileID),
 			}),
 		},
 		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONObject: &rf,
 		},
+	}
+	// k2.6 enables "thinking" by default; disabling it cuts latency. The field
+	// is Moonshot-specific and injected via SetExtraFields (a promoted method on
+	// every generated param in openai-go v1.12.0).
+	if !e.thinking {
+		params.SetExtraFields(map[string]any{
+			"thinking": map[string]any{"type": "disabled"},
+		})
 	}
 
 	completion, err := e.client.Chat.Completions.New(ctx, params)

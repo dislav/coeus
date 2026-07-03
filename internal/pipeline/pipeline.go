@@ -248,6 +248,8 @@ func (p *Pipeline) execute(ctx context.Context, job *domain.Job) error {
 // extractWithRetries calls Extract up to ExtractMaxAttempts times.
 // Retries on unreadable_image, no_questions_found, and transport errors.
 // partial_extraction and unknown codes are terminal (no retry).
+// Between retried attempts it sleeps per Pipeline.backoff (exponential + jitter
+// by default); the sleep honors ctx cancellation.
 func (p *Pipeline) extractWithRetries(ctx context.Context, image []byte, mime string) (ExtractResult, error) {
 	// result is zero-valued here — callers check err before inspecting result fields.
 	var result ExtractResult
@@ -261,23 +263,21 @@ func (p *Pipeline) extractWithRetries(ctx context.Context, image []byte, mime st
 			return result, nil
 		}
 
-		retry := false
 		if lastErr == nil && result.Error != nil {
 			switch result.Error.Code {
 			case ExtractionCodePartial:
 				return result, nil // terminal
 			case ExtractionCodeUnreadableImage, ExtractionCodeNoQuestions:
 				p.log.Warn("extract retryable failure", "attempt", attempt, "code", result.Error.Code)
-				retry = true
 			default:
 				return result, nil // terminal
 			}
 		} else {
 			p.log.Warn("extract error", "attempt", attempt, "error", lastErr)
-			retry = true
 		}
 
-		if !retry || attempt == p.cfg.ExtractMaxAttempts {
+		// Last attempt — stop without sleeping.
+		if attempt == p.cfg.ExtractMaxAttempts {
 			break
 		}
 

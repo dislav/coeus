@@ -257,3 +257,37 @@ func TestEnvOverrides_CORSAllowCredentialsInvalidErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyEnvOverrides_VisionThinking(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"true", "true", true},
+		{"one", "1", true},
+		{"TRUE", "TRUE", true},
+		{"false", "false", false},
+		{"zero", "0", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("COEUS_AI_VISION_THINKING", tt.in)
+			var cfg Config
+			if err := applyEnvOverrides(&cfg); err != nil {
+				t.Fatalf("applyEnvOverrides: %v", err)
+			}
+			if cfg.AI.Vision.Thinking != tt.want {
+				t.Errorf("Thinking = %v, want %v", cfg.AI.Vision.Thinking, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyEnvOverrides_VisionThinkingInvalid(t *testing.T) {
+	t.Setenv("COEUS_AI_VISION_THINKING", "yes")
+	var cfg Config
+	if err := applyEnvOverrides(&cfg); err == nil {
+		t.Fatal("expected error for invalid COEUS_AI_VISION_THINKING, got nil")
+	}
+}

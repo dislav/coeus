@@ -63,10 +63,11 @@ type AIConfig struct {
 }
 
 type VisionConfig struct {
-	BaseURL string        `yaml:"base_url"`
-	APIKey  string        `yaml:"api_key"`
-	Model   string        `yaml:"model"`
-	Timeout time.Duration `yaml:"timeout"`
+	BaseURL  string        `yaml:"base_url"`
+	APIKey   string        `yaml:"api_key"`
+	Model    string        `yaml:"model"`
+	Timeout  time.Duration `yaml:"timeout"`
+	Thinking bool          `yaml:"thinking"`
 }
 
 type ReviewerConfig struct {
@@ -125,6 +126,16 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if v := os.Getenv("COEUS_AI_VISION_BASE_URL"); v != "" {
 		cfg.AI.Vision.BaseURL = v
+	}
+	if v := os.Getenv("COEUS_AI_VISION_THINKING"); v != "" {
+		switch strings.ToLower(v) {
+		case "true", "1":
+			cfg.AI.Vision.Thinking = true
+		case "false", "0":
+			cfg.AI.Vision.Thinking = false
+		default:
+			return fmt.Errorf("invalid COEUS_AI_VISION_THINKING %q: expected true|false|1|0", v)
+		}
 	}
 	if v := os.Getenv("COEUS_AI_REVIEWER_API_KEY"); v != "" {
 		cfg.AI.Reviewer.APIKey = v

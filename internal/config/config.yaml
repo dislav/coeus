@@ -23,6 +23,7 @@ ai:
   vision:
     model: "kimi-k2.6"
     timeout: 90s
+    thinking: false   # k2.6 defaults to enabled; disabled cuts latency
   reviewer:
     model: "deepseek-v4-pro"
     timeout: 60s

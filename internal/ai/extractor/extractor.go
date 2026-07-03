@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"github.com/openai/openai-go"
@@ -22,9 +23,13 @@ import (
 var _ pipeline.AIExtractor = (*Extractor)(nil)
 
 type Extractor struct {
-	client *openai.Client
-	model  string
-	log    *slog.Logger
+	client     *openai.Client
+	model      string
+	baseURL    string
+	apiKey     string
+	httpClient *http.Client
+	thinking   bool
+	log        *slog.Logger
 }
 
 func New(cfg config.VisionConfig, log *slog.Logger) *Extractor {
@@ -32,9 +37,13 @@ func New(cfg config.VisionConfig, log *slog.Logger) *Extractor {
 		log = slog.Default()
 	}
 	return &Extractor{
-		client: oai.NewClient(cfg.BaseURL, cfg.APIKey, cfg.Timeout),
-		model:  cfg.Model,
-		log:    log,
+		client:     oai.NewClient(cfg.BaseURL, cfg.APIKey, cfg.Timeout),
+		model:      cfg.Model,
+		baseURL:    cfg.BaseURL,
+		apiKey:     cfg.APIKey,
+		httpClient: &http.Client{Timeout: cfg.Timeout},
+		thinking:   cfg.Thinking,
+		log:        log,
 	}
 }
 

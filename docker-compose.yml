@@ -63,7 +63,7 @@ services:
       COEUS_AI_VISION_API_KEY: ${COEUS_AI_VISION_API_KEY:?COEUS_AI_VISION_API_KEY is required in .env}
       COEUS_AI_REVIEWER_API_KEY: ${COEUS_AI_REVIEWER_API_KEY:?COEUS_AI_REVIEWER_API_KEY is required in .env}
       # Optional — empty is treated as unset by the app (defaults preserved).
-      COEUS_AI_VISION_BASE_URL: ${COEUS_AI_VISION_BASE_URL:-https://api.moonshot.cn/v1}
+      COEUS_AI_VISION_BASE_URL: ${COEUS_AI_VISION_BASE_URL:-https://api.moonshot.ai/v1}
       COEUS_AI_REVIEWER_BASE_URL: ${COEUS_AI_REVIEWER_BASE_URL:-https://api.deepseek.com/v1}
       COEUS_AI_EMBEDDER_API_KEY: ${COEUS_AI_EMBEDDER_API_KEY:-}
       COEUS_AI_EMBEDDER_BASE_URL: ${COEUS_AI_EMBEDDER_BASE_URL:-}

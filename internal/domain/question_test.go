@@ -61,3 +61,23 @@ func TestQuestionMultipleCorrectDerived(t *testing.T) {
 		t.Errorf("nil answers: got true, want false")
 	}
 }
+
+func TestInferQuestionType(t *testing.T) {
+	cases := []struct {
+		name    string
+		choices []string
+		want    string
+	}{
+		{"nil choices", nil, QuestionTypeFreeResponse},
+		{"empty choices", []string{}, QuestionTypeFreeResponse},
+		{"single choice", []string{"A"}, QuestionTypeMultipleChoice},
+		{"many choices", []string{"A", "B", "C"}, QuestionTypeMultipleChoice},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := InferQuestionType(tc.choices); got != tc.want {
+				t.Errorf("InferQuestionType(%v) = %q, want %q", tc.choices, got, tc.want)
+			}
+		})
+	}
+}

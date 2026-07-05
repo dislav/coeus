@@ -1068,9 +1068,9 @@ For each line below, apply the described change. The rule: every MC body needs `
 | 686 | `{"question":"q","choices":["a","b"],"answers":["a"]}` | `{"question":"q","type":"multiple_choice","choices":["a","b"],"answers":["a"]}` |
 | 699 | `{"question":"q","choices":["a","b"],"answers":["a"],"choice_labeling":"emoji"` | `{"question":"q","type":"multiple_choice","choices":["a","b"],"answers":["a"],"choice_labeling":"emoji"` |
 | 708 | `{"question":"q","choices":["a","b"],"answers":["a"],"confidence":...}` | `{"question":"q","type":"multiple_choice","choices":["a","b"],"answers":["a"],"confidence":...}` |
-| 719 | `{"question":"q","choices":["only"],"answers":["a"]}` | `{"question":"q","type":"multiple_choice","choices":["a","b"],"answers":["a"]}` |
+| 719 | `{"question":"q","choices":["only"],"answers":["a"]}` | `{"question":"q","type":"multiple_choice","choices":["only"],"answers":["a"]}` — keep 1 choice; the 400 now comes from the handler's `len(choices) < 2` check (see note below) |
 
-> **Line 719 note:** this was a single-choice body. If the test expects a 400 for a reason unrelated to choices (e.g. invalid choice labeling), keeping it as a valid MC body with 2 choices preserves the original intent. Check the test name before editing — if it asserts a choices-specific 400, leave the single choice but set `"type":"multiple_choice"` so the 400 now comes from the `len < 2` rule (still the expected status code).
+> **Line 719 note:** This test (`TestCreate_MissingRequiredFields400` or similar) expects a 400 response. The original body had 1 choice, which was rejected by the old `binding:"required,min=2"` tag. Under the new design that binding is relaxed, so the 400 must come from the handler's type-conditional `len(choices) < 2` check instead. **Do NOT grow the choices to 2** — that would make the body valid and return 201, breaking the 400 assertion. Instead, keep `"choices":["only"]` and add `"type":"multiple_choice"` so the handler rejects it. Update the test name/comment to reflect the new rejection reason (single-choice MC rejected by handler, not by binding).
 
 - [ ] **Step 11: Run the handler tests to find any remaining bodies**
 
@@ -1363,12 +1363,12 @@ Expected: PASS (the embed compiles; no structural test exists for skill prose, b
 
 - [ ] **Step 5: Schema regression guard — confirm extractor DTO is unchanged**
 
-Confirm the extractor DTO structs in `internal/ai/extractor/schema.go` have **no** `Type` field (the type is pipeline-inferred, never in the AI contract):
+Confirm the extractor DTO structs in `internal/ai/extractor/schema.go` have **no** `Type` field (the type is pipeline-inferred, never in the AI contract). Grep for struct field definitions only — `^\s*Type\s` matches a field declaration like `Type string` but not type assertions, comments, or method calls:
 
 ```bash
-grep -n 'Type' internal/ai/extractor/schema.go internal/ai/verifier/schema.go
+grep -n '^\s*Type\s' internal/ai/extractor/schema.go internal/ai/verifier/schema.go
 ```
-Expected: **no output** (no `Type` field in either schema). If any line matches, remove it — the type must not cross the AI boundary.
+Expected: **no output** (no `Type` struct field in either schema file). If any line matches, it means a `Type` field was accidentally added to the AI DTO — remove it. The type must not cross the AI boundary.
 
 - [ ] **Step 6: Commit**
 
@@ -1389,5 +1389,5 @@ After all six tasks are complete, run the full verification suite:
 - [ ] **Vet:** `go vet ./...` — no errors.
 - [ ] **Unit tests:** `go test -short ./...` — all PASS.
 - [ ] **Integration tests (Docker required):** `go test ./internal/storage/postgres/ ./internal/pipeline/ -timeout 180s` — all PASS.
-- [ ] **Schema regression:** `grep -n 'Type' internal/ai/extractor/schema.go internal/ai/verifier/schema.go` — no output.
+- [ ] **Schema regression:** `grep -n '^\s*Type\s' internal/ai/extractor/schema.go internal/ai/verifier/schema.go` — no output.
 - [ ] **End-to-end smoke (manual, if environment allows):** upload an exam image containing a free-response question; confirm the returned question has `"type":"free_response"`, `"choices":[]`, and an answer with no phantom `"id"` key.

@@ -98,6 +98,17 @@ Confidence now reflects how certain you are that **your answer is correct** — 
 - `0.50–0.79`: Significant uncertainty — human must verify.
 - `0.0–0.49`: Answer is unreliable or could not be determined. Treat as unanswered.
 
+## Free-response confidence tiers
+
+For questions with `choices: []` (free-response), apply these confidence tiers:
+
+- **Short objective answers** — formulas, numbers, single words, names, units (the common case). Solve at **confidence ≥ 0.80**.
+- **Detailed / subjective answers** — algorithms, proofs, "развернутый ответ", multi-sentence explanations. Produce a **best-effort** answer at **0.50–0.79**. These cannot be graded automatically; the moderate confidence signals "plausible, needs human review."
+
+### Answer format
+
+Produce **exactly what fills the input field** — include units if implied by the prompt (`2 м/с²`, not `2`), omit surrounding prose. The value must be directly droppable into the blank.
+
 ### Garbled Text Detection
 
 The extractor may have produced OCR/extraction errors. Watch for:

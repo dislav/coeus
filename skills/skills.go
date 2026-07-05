@@ -4,8 +4,9 @@
 // prompts sent to the models always match the tested skill text — no drift from
 // hand-condensed paraphrases.
 //
-// The consuming packages (internal/ai/extractor, internal/ai/verifier) append a
-// small pipeline-specific extension (the "tags" field) on top of this base text.
+// The consuming packages (internal/ai/extractor, internal/ai/verifier) use these
+// prompts verbatim — the "tags" field and Russian-output rules now live in the
+// skills themselves, so there is no appended extension.
 package skills
 
 import _ "embed"

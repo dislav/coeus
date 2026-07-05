@@ -1,26 +1,29 @@
 ---
 name: extract-questions-from-image
-description: Use when the user provides an image of a quiz, test, exam, or questionnaire and wants the questions, answer choices, correct answers, and confidence scores extracted into structured JSON. Also use when the image may be rotated, contain handwritten or printed text, include checkboxes, or have questions that require calculation or reasoning to determine the answer.
+description: Use when the user provides an image of a quiz, test, exam, or questionnaire and wants the questions and answer choices transcribed into structured JSON. This skill is a PARSER ONLY — it reads what the image literally shows (question text, choices, and any visibly-marked answers) and does NOT solve, calculate, or reason about correct answers. A separate downstream model answers the questions. Also use when the image may be rotated, contain handwritten or printed text, or include checkboxes.
 ---
 
 # Extract Questions from Image
 
 ## Overview
 
-Analyze the provided image, extract all questions with their answer choices, determine the correct answer(s), and return everything as structured JSON.
+Analyze the provided image and **transcribe** it: extract every question, its answer choices, and any answers that are **visibly marked** in the image (checked boxes, filled circles, highlighted/bold choices). Return everything as structured JSON.
 
-The image may be a screenshot, a scanned paper, a rotated photo, or any other visual test/quiz document. Questions may be in any language and may require you to compute the answer when it is not visibly marked.
+**You are a parser, not a solver.** Your only job is to read what is printed and marked on the page. Do not determine correctness by reasoning, calculation, or domain knowledge. When no answer is visibly marked, leave `answers` empty — the downstream model will solve it.
+
+The image may be a screenshot, a scanned paper, a rotated photo, or any other visual test/quiz document. Questions may be in any language.
 
 ## When to Use
 
 - The user uploads or references an image that contains one or more quiz/exam/test questions.
-- The user asks for answers, question extraction, parsing, JSON output, or structured data from such an image.
+- The user asks for question extraction, parsing, OCR, or structured JSON from such an image.
 - The image is rotated, low quality, or partially readable.
 
 ## When NOT to Use
 
 - The user provides only text (no image).
-- The user wants a plain summary or translation of the image without question/answer extraction.
+- The user wants the questions **answered** or solved. Parsing is this skill's job; **answering is a different skill** (`verify-extracted-questions`). Do not attempt to answer here.
+- The user wants a plain summary or translation of the image without question/choice extraction.
 
 ## Output Format
 
@@ -40,46 +43,58 @@ Return a single JSON object with this exact structure. Every key shown is requir
       "answers": [
         {"id": "C", "value": "HBr"}
       ],
+      "tags": ["химия"],
       "confidence": 0.92,
-      "explanation": "Brief reason for the answer; only as detailed as needed"
+      "explanation": "Что вы увидели на изображении; без рассуждений (на русском)"
     }
   ]
 }
 ```
 
-**Required keys for every question object:** `number`, `question`, `choices`, `answers`, `confidence`, `explanation`. Do not rename, omit, or replace any of these keys.
+**Required keys for every question object:** `number`, `question`, `choices`, `answers`, `tags`, `confidence`, `explanation`. Do not rename, omit, or replace any of these keys.
 
 ### Field rules
 
 - `number`: The question number shown in the image. If there is no number, use `1` and increment sequentially.
-- `question`: The full question text. Preserve line breaks with `\\n` only when the question explicitly contains multiple lines (e.g., a table or a poem). Normally use a single line.
-- `choices`: Array of choice **strings** in the order they appear in the image. **Do not include the leading label prefix** (e.g., `"A) "`, `"1. "`, `"б) "`) in the string — store only the choice text itself. If the question has no explicit choices (open-ended), set this to `[]` and put the answer in `answers`.
-- `answers`: Array of objects, each with `id` and `value`:
+- `question`: The full question text, transcribed verbatim. Preserve line breaks with `\\n` only when the question explicitly contains multiple lines (e.g., a table or a poem). Normally use a single line.
+- `choices`: Array of choice **strings** in the order they appear in the image. **Do not include the leading label prefix** (e.g., `"A) "`, `"1. "`, `"б) "`) in the string — store only the choice text itself. If the question has no explicit choices (open-ended), set this to `[]`.
+- `answers`: Array of objects, each with `id` and `value`, describing **only what is visibly marked in the image**:
   - `id`: The bare label used in the image, stripped of any trailing punctuation. Use only the letter or number: `"A"`, `"B"`, `"1"`, `"2"`, `"а"`, etc. Do not include `)`, `.`, or any other characters.
-  - `value`: The full text of the correct choice, exactly as it appears in `choices` (without the label prefix).
-  - If no answer can be determined, use an empty array `[]`.
-  - This dual format preserves both the current ordering (via `id`) and the actual answer text (via `value`) for database storage.
-- `confidence`: A number from `0.0` to `1.0` representing your confidence that the extracted data is correct.
-- `explanation`: Brief note helping a human verify the answer. Include calculations or reasoning only when the answer is not directly visible. When the answer is inferred rather than visibly marked, explicitly state the source of uncertainty (e.g., "inferred from calculation", "text is slightly blurred", "graph values are unclear") so a downstream verifier knows what to double-check.
+  - `value`: The full text of the marked choice, exactly as it appears in `choices` (without the label prefix).
+  - **If nothing is visibly marked, set `answers: []`.** Do not fill this from reasoning or calculation.
+  - For open-ended questions with a visible handwritten/printed answer, record it as `{"value": "the visible answer"}` (no `id`).
+- `confidence`: A number from `0.0` to `1.0` representing your confidence that you **transcribed** the question, choices, and markings correctly. This is about legibility and clarity of what is on the page — **not** about whether an answer is correct. See the rubric below.
+- `explanation`: A brief note, **in Russian**, on what you **observed**, to help the downstream answering model. Describe markings and legibility only. Examples: `"Отмечен вариант C; других отметок нет."`, `"Ответ на изображении не отмечен."`, `"Вариант B частично размыт."`. **Do not include calculations, reasoning, or claims about correctness.**
+- `tags`: An array of **lowercase Russian** subject classifiers used downstream for routing and de-duplication. Add it to every question object. Provide at least one tag per question when the subject is identifiable; use `[]` only when it genuinely cannot be determined. Suggested vocabulary: `математика`, `химия`, `физика`, `биология`, `история`, `география`, `медицина`, `литература`, `информатика`. Example: `"tags": ["химия"]`.
 
-## Handling Correct Answers
+### Output Language
 
-1. **Visibly marked answers** — If the image shows checked checkboxes, filled circles, bold/highlighted choices, or any other marking, use those as the answer(s). Set confidence high if markings are clear.
-2. **Single correct answer** — If the question asks for one answer and the image does not mark it, solve or reason to find the correct choice.
-3. **Multiple correct answers** — If the question text says "choose all that apply" / "один или несколько" / "выберите верные утверждения" / or the UI uses checkboxes, list every correct choice in the `answers` array (multi-ness is derived from the answer count).
-4. **No choices / open-ended** — If the question has no answer options, provide the answer directly in `answers` as an object with `value` only (e.g., `[{"value": "2 м/с²"}]`) and set `choices: []`.
-5. **Cannot determine** — If the image is too unclear or the question requires domain knowledge you cannot confidently apply, leave `answers: []` and lower `confidence`.
+All human-readable prose you author must be in **Russian**:
+- `explanation` for every question.
+- Error `message` and `details` (when returning an error).
 
-## Confidence Scoring
+JSON keys (`number`, `question`, `choices`, etc.) and error `code` values (`unreadable_image`, `partial_extraction`, `no_questions_found`) stay in English — they are identifiers. Transcribe `question` and `choices` exactly as they appear in the image, whatever language that is. Only the prose you *write* is Russian.
 
-Use the following guidance:
+## Handling Answers (parser rules)
 
-- `0.95–1.0`: Text and markings are very clear; little doubt.
-- `0.80–0.94`: Text is readable but small, slightly blurry, or has some ambiguity.
-- `0.50–0.79`: Parts are hard to read, rotated, or require significant inference.
-- `0.0–0.49`: Major parts are unreadable or the answer is a guess.
+1. **Visibly marked answers** — If the image shows checked checkboxes, filled circles, bold/highlighted choices, or any other marking, transcribe those markings into `answers`. This is a visual observation, not a judgment of correctness. Set `confidence` high when the markings are clear and unambiguous.
+2. **Multiple marked answers** — If the question text says "choose all that apply" / "один или несколько" / "выберите верные утверждения" / or the UI uses checkboxes and several are marked, transcribe every marked choice into `answers`.
+3. **No visible marking** — If the image does not mark an answer for a question, set `answers: []`. **Do not solve, calculate, reason, or guess.** Leave solving entirely to the downstream model. Lower `confidence` only if the question *text itself* was hard to read — not because the answer is absent.
+4. **Open-ended with no visible answer** — Set `answers: []` and `choices: []` unless a handwritten/printed answer is visibly present.
+5. **Cannot read the question text** — Transcribe what you can and return a `partial_extraction` error naming the affected questions.
 
-Set per-question confidence, not per-answer confidence.
+> The critical rule: **an empty `answers` array is the correct, expected output for any question whose correct answer is not visually marked.** A blank answer here is not a failure — it tells the downstream model "this question needs to be solved."
+
+## Confidence Scoring (transcription confidence)
+
+Confidence reflects how reliably you read the page, not whether an answer is right:
+
+- `0.95–1.0`: Text and markings are crisp and unambiguous; no doubt about what is written or marked.
+- `0.80–0.94`: Text is readable but small, slightly blurry, or a marking is a little faint.
+- `0.50–0.79`: Parts are hard to read, rotated, or partially obscured; you are unsure of some characters or whether a mark is present.
+- `0.0–0.49`: Major parts are unreadable or you are guessing at the text.
+
+Set per-question confidence. An unmarked-but-clearly-legible question should still be `0.90+` — the absence of a marking is not uncertainty about the text.
 
 ## Image Orientation
 
@@ -93,8 +108,8 @@ If the image cannot be parsed correctly, return JSON in this exact error format:
 {
   "error": {
     "code": "unreadable_image" | "partial_extraction" | "no_questions_found",
-    "message": "Human-readable description of what went wrong",
-    "details": "Optional: which questions were affected, e.g., 'could not read questions 1 and 7'",
+    "message": "Читаемое человеком описание того, что пошло не так (на русском)",
+    "details": "Необязательно: какие вопросы затронуты, например: «не удалось прочитать вопросы 1 и 7»",
     "questions_extracted": 3,
     "questions_expected": 5
   },
@@ -116,14 +131,12 @@ Always include any successfully extracted questions in the `questions` array, ev
 
 1. Read the image carefully. If rotated, reorient mentally.
 2. Identify each question and its boundaries.
-3. Extract the question text, choices, and any visible markings.
-4. Determine the correct answer(s):
-   - From visible markings when present.
-   - By calculation or reasoning when not marked.
-   - Leave empty if neither is possible.
-5. Build the JSON object.
-6. Review the JSON for completeness and accuracy before responding.
-7. Return only the JSON. Do not wrap it in markdown code blocks unless the user explicitly asks for markdown.
+3. Transcribe the question text and choices verbatim, stripping label prefixes from choices.
+4. Record only **visibly marked** answers. If nothing is marked, leave `answers: []`.
+5. Set `confidence` based on how legibly you could read the text and markings.
+6. Write `explanation` describing what you observed (markings, legibility) — no reasoning.
+7. Build the JSON object and review it for completeness before responding.
+8. Return only the JSON. Do not wrap it in markdown code blocks unless the user explicitly asks for markdown.
 
 ## Example
 
@@ -136,7 +149,7 @@ For an image with:
 > □ Na₂CO₃
 > ☑ H₂SO₄
 
-Output:
+Output (note: only the visibly checked boxes are recorded):
 
 ```json
 {
@@ -155,8 +168,31 @@ Output:
         {"id": "C", "value": "HBr"},
         {"id": "E", "value": "H₂SO₄"}
       ],
+      "tags": ["химия"],
       "confidence": 0.98,
-      "explanation": "Checked boxes correspond to HBr and H₂SO₄, which are acids."
+      "explanation": "Отмечены варианты C (HBr) и E (H₂SO₄); весь текст чёткий."
+    }
+  ]
+}
+```
+
+For an image with an **unmarked** question:
+
+> 2. Чему равно значение выражения 7 × 8?
+
+Output (no answer is marked, so `answers` is empty — the downstream model will solve it):
+
+```json
+{
+  "questions": [
+    {
+      "number": 2,
+      "question": "Чему равно значение выражения 7 × 8?",
+      "choices": [],
+      "answers": [],
+      "tags": ["математика"],
+      "confidence": 0.97,
+      "explanation": "Вопрос с открытым ответом; ответ на изображении не отмечен."
     }
   ]
 }
@@ -164,19 +200,20 @@ Output:
 
 ## Common Mistakes
 
-- Returning only one answer when multiple are correct.
-- Returning id values that include punctuation like `"A)"`, `"1."`, or `"2)"`. IDs must be bare letters/numbers only.
+- **Solving or guessing an answer when none is visibly marked.** This is the most important mistake to avoid. Leave `answers: []` and let the downstream model solve it.
+- Including calculations, reasoning, or correctness claims in `explanation`.
+- Lowering `confidence` just because a question has no marked answer. Confidence is about legibility, not answer presence.
+- Returning only one marked answer when several boxes are checked.
+- Returning `id` values that include punctuation like `"A)"`, `"1."`, or `"2)"`. IDs must be bare letters/numbers only.
 - Leaving the label prefix inside `choices` strings like `"1) ..."` or `"A) ..."`. Strip the prefix and store only the choice text.
 - Forgetting `confidence` on every question.
 - Ignoring image rotation and producing garbled text.
 - Including surrounding page headers, instructions, or stamps as part of the question text.
 - Returning prose instead of the required JSON.
-- Omitting confidence scores.
 
 ## Red Flags
 
-- You feel tempted to describe the image instead of returning JSON.
-- You are unsure whether a choice was selected but mark it anyway without lowering confidence.
-- You skip a question because it is hard to read instead of returning a partial extraction error.
-
-If you are unsure about a question, extract what you can and return a `partial_extraction` error with `details` explaining which questions were problematic.
+- You feel tempted to compute an answer (math, chemistry, logic) — stop. If it is not visibly marked, leave `answers: []`.
+- You are unsure whether a choice was marked but record it anyway without lowering confidence.
+- You want to describe the image instead of returning JSON.
+- You skip a hard-to-read question instead of returning a partial extraction error.

@@ -1,28 +1,29 @@
 ---
 name: verify-extracted-questions
-description: Use after extract-questions-from-image to independently verify answer correctness, validate JSON structure, and re-evaluate confidence scores. Use whenever the user mentions verifying, checking, reviewing, or validating extracted test/exam answers, wants a second opinion on answer accuracy, needs to prepare extracted questions for human review, or provides JSON that was extracted from test/exam images and wants to confirm the answers are correct. Also use when the user says "check my answers", "verify this", "review the extraction", or "double-check the results".
+description: Use after extract-questions-from-image to ANSWER the parsed questions. This skill is the authoritative answerer — it receives questions transcribed from an exam image, solves each one by reasoning, and writes the correct answers into the output JSON. Those output answers are canonical and replace whatever the parser extracted. Also use it to validate JSON structure, re-evaluate confidence, and prepare questions for human review. Use when the user says "answer these questions", "solve them", "verify this", "check the answers", or provides JSON extracted from test/exam images and wants correct answers.
 ---
 
-# Verify Extracted Questions
+# Verify Extracted Questions (Authoritative Answerer)
 
 ## Overview
 
-Take the JSON output from `extract-questions-from-image` and perform a thorough second-pass verification. The goal is to catch errors before a human reviewer sees the results — structural problems get fixed, answer disagreements get flagged, and confidence scores get re-evaluated.
+Take the JSON output from `extract-questions-from-image` and **answer every question**. You are the smarter, reasoning model in the pipeline; the extractor only transcribed the image and deliberately did not solve anything. Your job is to determine the correct answer for each question, write it into the output, and explain your reasoning.
 
-This skill does NOT have access to the original image. It works entirely from the extracted JSON and its own domain knowledge.
+**Your `answers` array is authoritative.** Whatever you put in `answers` becomes the canonical answer shown to the user — it replaces the extractor's `answers` (which at most contains what was visually marked in the image, and is often empty). Do not merely "flag" disagreements in a note; **set the correct answer directly.**
+
+This skill does NOT have access to the original image. It works from the extracted JSON, the question text, the choices, and its own domain knowledge.
 
 ## When to Use
 
 - After `extract-questions-from-image` has produced its JSON output.
-- User wants a second opinion on answer accuracy before manual review.
-- User needs structural validation of the extracted JSON.
-- User is preparing a batch of extracted questions for a human checker and wants to pre-screen them.
+- The user wants the parsed questions **answered** / solved.
+- The user wants a second, authoritative pass over extracted answers before manual review.
+- The user needs structural validation of the extracted JSON.
 
 ## When NOT to Use
 
-- The extraction has not been performed yet (use `extract-questions-from-image` first).
-- The user wants to re-extract from the image (this skill only verifies existing JSON).
-- The user wants a plain-language summary rather than a verified JSON.
+- Extraction has not been performed yet (use `extract-questions-from-image` first).
+- The user wants to re-extract from the image (this skill never sees the image).
 
 ## Input
 
@@ -36,6 +37,7 @@ One or more JSON files matching the `extract-questions-from-image` output schema
       "question": "...",
       "choices": ["...", "..."],
       "answers": [{"id": "A", "value": "..."}],
+      "tags": ["химия"],
       "confidence": 0.92,
       "explanation": "..."
     }
@@ -43,145 +45,133 @@ One or more JSON files matching the `extract-questions-from-image` output schema
 }
 ```
 
+Treat the input `answers` as **evidence about what was visually marked in the image**, not as a claim of correctness. Frequently it will be empty (`[]`) — that just means the question was not marked and you must solve it.
+
 May also include the optional `error` field from partial extractions.
 
 **Batch:** Accept a directory of JSON files or a single JSON file with multiple independent question sets. Process each independently.
 
-## Verification Process
+## Answering Process
 
-Perform these three checks for every question. Work question by question, not all structure then all answers — this lets you catch cross-field inconsistencies.
+Perform these steps for every question. Work question by question.
 
 ### 1. Structural Validation
 
-Check and **fix** these issues in the output JSON:
+Check and **fix** these issues in the output JSON you produce:
 
 | Check | Action if fails |
 |-------|----------------|
 | All required keys present: `number`, `question`, `choices`, `answers`, `confidence`, `explanation` | Add missing keys with sensible defaults (`choices: []`, `answers: []`, `confidence: 0.5`, `explanation: ""`) |
 | `answers[].id` maps to a valid position in `choices` (A→0, B→1, ..., or 1→0, 2→1, ...) | Fix the `id` to match the actual position of `value` in `choices`. If `value` is not in `choices`, keep the original but note the mismatch |
-| `answers[].value` matches `choices[index]` for the given `id` | If `id` maps to a different choice than `value`, fix `value` to match what's actually at that position (the `id` is the source of truth since it reflects what was marked in the image) |
+| `answers[].value` matches `choices[index]` for the given `id` | If `id` maps to a different choice than `value`, fix `value` to match what's actually at that position |
 | `confidence` is a number between 0.0 and 1.0 | Clamp to range; if missing or non-numeric, default to 0.5 |
 | No duplicate `number` values | Renumber sequentially if duplicates found |
 | Question numbers are sequential (1, 2, 3...) | Fix gaps but preserve original order; note renumbering in `_verification` |
 
-**Do NOT modify** `question` text, `choices` array content, or the `answers` array itself. These come from the original image and changing them would distort the source material.
+**Do NOT modify** `question` text, `choices` array content, or `tags`. The `question` and `choices` come from the original image and changing them would distort the source material; the `tags` are lowercase Russian subject classifiers the extractor produced, and they drive downstream routing and de-duplication, so they must be carried through for every question, unchanged. You **may and must** rewrite the `answers` array — that is the whole point of this skill. The only exception for `tags`: if the input had none and the subject is unmistakable, you may add a single lowercase Russian subject tag (e.g. `"химия"`).
 
-### 2. Answer Correctness Verification
+### 2. Solve Each Question (your primary job)
 
-For each question, independently determine the correct answer and compare with the extracted answer.
+For each question, **independently determine the correct answer** using your domain knowledge, calculation, and reasoning. Then **write that answer into the output `answers` array.** This is the canonical answer.
 
-**When to re-solve:**
-- Confidence is below 0.80
-- The `explanation` mentions inference, calculation, or uncertainty ("inferred from...", "calculated as...", "appears to be...", "possibly...")
-- The question is from a domain where you have strong knowledge (math, science, logic, grammar, etc.)
-- The answer seems obviously wrong even at a glance
+**How to solve:**
 
-**When to trust the extraction:**
-- Confidence is 0.90+ and explanation says "visibly marked" or "clearly checked"
-- The question requires visual inspection of the image (diagrams, highlighted text, handwritten marks) that you cannot see
+- **Multiple-choice with choices:** Pick the correct choice(s). Set `answers` to `{"id": "<letter/number>", "value": "<exact choice text from choices>"}`. The `value` must be copied verbatim from the `choices` array.
+- **Multiple correct answers:** If the question says "choose all that apply" / "один или несколько" / "выберите верные утверждения", include **every** correct choice in `answers` and exclude every incorrect one. Multi-ness is derived from the answer count.
+- **Open-ended (no choices):** Compute or state the answer directly, e.g. `{"value": "2 м/с²"}` (no `id`), and set `choices: []`.
+- **Calculation required:** Show the work briefly in `explanation` (formulas, substitution, result), then put the final answer in `answers`.
 
-**How to handle disagreements:**
+**How to treat the input answers (evidence from the image):**
 
-If you believe the extracted answer is incorrect, do NOT change the `answers` array. Instead, append a verification flag to the `explanation` field using this exact format:
+- If the input had **no marked answer** (`answers: []`): solve the question from scratch and write your answer. This is the common case.
+- If the input had a **visibly marked answer**: treat it as a hint about what was marked on the page. Solve independently anyway.
+  - If your solution **agrees** with the marking: keep that answer, set confidence high, and note confirmation in `explanation` (e.g., `"Совпадает с отметкой на изображении."`).
+  - If your solution **disagrees** with the marking: **your answer wins.** Set `answers` to your solution. The marking may have been a student's wrong answer or a misread; the reasoning model is authoritative. Note the disagreement in `explanation` and record it in `_verification.answers_overridden`.
+- If you **cannot solve** a question (genuinely outside your knowledge, or the question text is too garbled to understand): set `answers: []`, set `confidence` below 0.5, and explain what blocked you. Do not guess.
 
-```
-[VERIFICATION FLAG]
-Original answer: {value} (id: {id})
-Verifier suggests: {your answer} (id: {your id})
-Reason: {brief reason for disagreement — calculation, logic, domain knowledge}
-Action: awaiting human review
-```
+### 3. Confidence Scoring (answer confidence)
 
-Keep the flag concise but specific. A human will read this and decide.
+Confidence now reflects how certain you are that **your answer is correct** — not transcription quality (that was the extractor's job).
 
-If you agree with the extracted answer, you may append a brief confirmation to the explanation (e.g., `[Verified: answer confirmed correct via independent calculation]`), but this is optional — don't bloat explanations that are already clear.
-
-### 3. Confidence Re-evaluation
-
-Re-assess the confidence score based on what you can determine from the JSON alone. Adjust the `confidence` field if the original score seems misaligned.
-
-**Increase confidence when:**
-- The question is straightforward and the answer is unambiguously correct
-- The explanation is detailed and logically sound
-- The question text is perfectly clear (no garbled characters, no truncation)
-
-**Decrease confidence when:**
-- The question text contains garbled characters, OCR artifacts, or obvious misreads (e.g., "H2S04" instead of "H₂SO₄", "Fe(OH)z" instead of "Fe(OH)₂")
-- The explanation describes visual ambiguity ("mark is faint", "checkbox partially filled")
-- The answer requires interpreting a graph, diagram, or image element you cannot see
-- The question allows multiple answers but the verifier can identify additional correct choices that were missed
-
-**Confidence ranges** (same scale as extraction skill):
-- `0.95–1.0`: Answer is clearly correct, no ambiguity
-- `0.80–0.94`: Answer is likely correct, minor uncertainty
-- `0.50–0.79`: Significant uncertainty — human must verify
-- `0.0–0.49`: Answer is unreliable — treat as unchecked
+- `0.95–1.0`: Answer is unambiguously correct; verified by calculation or clear-cut knowledge.
+- `0.80–0.94`: Answer is very likely correct; minor residual uncertainty.
+- `0.50–0.79`: Significant uncertainty — human must verify.
+- `0.0–0.49`: Answer is unreliable or could not be determined. Treat as unanswered.
 
 ### Garbled Text Detection
 
-Watch for these signs of OCR/extraction errors in question text and choices:
-- Chemical formulas with wrong capitalization or subscript (e.g., "H2O" → "H20", "CO2" → "C02")
-- Numbers substituted for letters ("0" for "O", "1" for "l")
-- Nonsensical word fragments
-- Mismatched parentheses or brackets
-- Text that doesn't form coherent sentences
+The extractor may have produced OCR/extraction errors. Watch for:
 
-When you find garbled text, note it in the explanation: `[NOTE: possible OCR error in question text — "{suspicious fragment}" may be "{likely correction}"]`. Do NOT fix the text itself.
+- Chemical formulas with wrong capitalization or subscript (e.g., "H2O" → "H20", "CO2" → "C02", "Fe(OH)z" → "Fe(OH)₂").
+- Numbers substituted for letters ("0" for "O", "1" for "l").
+- Nonsensical word fragments, mismatched parentheses, incoherent sentences.
+
+When you find garbled text: reason about what it most likely should be, solve based on the corrected reading, and note it in `explanation`: `[ПРИМЕЧАНИЕ: возможная ошибка распознавания в тексте вопроса — «{подозрительный фрагмент}» прочитан как «{вероятное исправление}»]`. Do **not** modify the `question` or `choices` text itself.
+
+## Output Language
+
+All human-readable prose you author must be in **Russian**:
+- `explanation` for every question (your reasoning).
+- Every `_verification` array entry: `structural_fixes`, `answers_overridden`, `confidence_adjustments`, `garbled_text_detected`, `unsolved`.
+- `_verification.summary`.
+
+JSON keys (`number`, `_verification`, `timestamp`, etc.) stay in English — they are identifiers. Transcribe `question` and `choices` exactly as received. `tags` stay as lowercase Russian subject classifiers, carried through unchanged. Only the prose you *write* is Russian.
 
 ## Output Format
 
-Return the verified JSON with the same `{ questions: [...] }` structure. Add a `_verification` summary object at the top level:
+Return the answered JSON with the same `{ questions: [...] }` structure, where each question's `answers` now holds **your authoritative answers**. Add a `_verification` summary object at the top level:
 
 ```json
 {
   "_verification": {
     "timestamp": "2026-06-15T10:30:00Z",
-    "questions_verified": 5,
+    "questions_answered": 5,
     "structural_fixes": [
-      "Question 3: added missing 'confidence' field (defaulted to 0.5)",
-      "Question 4: fixed answers[0].value to match choices at index B"
+      "Вопрос 3: добавлено отсутствующее поле «confidence» (по умолчанию 0.5)"
     ],
-    "answers_flagged": [
-      "Question 2: answer disagreement — verifier suggests D instead of B"
+    "answers_overridden": [
+      "Вопрос 2: в исходных данных отмечено B; при проверке получен ответ D"
     ],
     "confidence_adjustments": [
-      "Question 1: 0.92 → 0.85 (garbled text detected in question)",
-      "Question 5: 0.60 → 0.75 (answer confirmed via calculation)"
+      "Вопрос 1: 0.92 → 0.85 (в вопросе обнаружен искажённый текст)",
+      "Вопрос 5: 0.60 → 0.95 (ответ подтверждён вычислением)"
     ],
     "garbled_text_detected": [
-      "Question 1: 'H2S04' may be 'H₂SO₄'"
+      "Вопрос 1: «H2S04», возможно, «H₂SO₄»"
     ],
-    "summary": "5 questions verified. 2 structural fixes applied. 1 answer flagged for human review. 0 questions could not be verified."
+    "unsolved": [
+      "Вопрос 4: текст вопроса слишком искажён, чтобы решить"
+    ],
+    "summary": "Обработано 5 вопросов. 5 решено. 1 структурная правка. 1 отметка исходных данных заменена. 0 нерешённых."
   },
   "questions": [...]
 }
 ```
 
-The `_verification` object is for the human reviewer's convenience. Downstream consumers that expect `{ questions: [...] }` can safely ignore it.
+Every field in `_verification` is optional except `timestamp` and `summary`. Only include an array if it has entries. The `_verification` object is for the human reviewer's convenience and is persisted alongside the answers; downstream consumers that expect `{ questions: [...] }` can safely ignore it.
 
-Every field in `_verification` is optional except `timestamp` and `summary`. Only include arrays (`structural_fixes`, `answers_flagged`, `confidence_adjustments`, `garbled_text_detected`) if they have entries.
+> The JSON key must remain `_verification` exactly — downstream code reads it by name.
 
 ## Handling the Error Case
 
 If the input JSON contains an `error` field (from a partial extraction):
-- Verify the successfully extracted questions normally
-- Note in `_verification.summary` that some questions were not extracted
-- Do not attempt to re-extract — that's the extraction skill's job
+- Answer the successfully extracted questions normally.
+- Note in `_verification.summary` that some questions were not extracted.
+- Do not attempt to re-extract — that is the extractor's job.
 
-## Batch Verification
+## Batch Answering
 
 When given multiple files or a directory:
 
 1. Process each file independently.
-2. Produce one verified JSON per input file. Name output files as `<original_name>_verified.json`.
+2. Produce one answered JSON per input file. Name output files `<original_name>_verified.json`.
 3. Print a batch summary at the end listing:
    - Total files processed
-   - Total questions verified
+   - Total questions answered
    - Total structural fixes
-   - Total answers flagged
-   - Files with the most flags (prioritize human review of these)
-
-If given a single JSON file with multiple question sets (unusual), preserve the grouping and verify each set independently.
+   - Total input markings overridden
+   - Total unsolved
+   - Files with the most overrides / unsolved (prioritize human review of these)
 
 ## Example
 
@@ -196,33 +186,30 @@ If given a single JSON file with multiple question sets (unusual), preserve the 
       "answers": [
         {"id": "C", "value": "HBr"}
       ],
+      "tags": ["химия"],
       "confidence": 0.98,
-      "explanation": "Checked boxes correspond to HBr and H₂SO₄, which are acids."
+      "explanation": "Отмечен вариант C (HBr); весь текст чёткий."
     }
   ]
 }
 ```
 
-**Verifier analysis:**
-- Structural check: PASS — all fields present, IDs valid, confidence in range.
-- Answer check: The explanation says "HBr **and** H₂SO₄" but only HBr is in the answers array. The question allows multiple answers (two choices are described), yet H₂SO₄ (index 4, id "E") is missing from the answers. This is a structural inconsistency — the explanation describes two answers but only one is recorded.
-- Confidence check: 0.98 is too high given the inconsistency.
+**Answerer analysis:**
+- Structural check: PASS.
+- Solve: Acids are substances that donate H⁺. Among the choices: Fe(OH)₂ is a base (hydroxide), Cs₂O is a basic oxide, **HBr is an acid** (hydrobromic acid), Na₂CO₃ is a salt, **H₂SO₄ is an acid** (sulfuric acid). So the correct answers are HBr (C) and H₂SO₄ (E).
+- The input only had HBr marked. The marking was partial/incorrect — the answerer adds H₂SO₄.
+- Confidence: 0.97 (straightforward chemistry).
 
 **Output (`chemistry_test_verified.json`):**
 ```json
 {
   "_verification": {
     "timestamp": "2026-06-15T10:30:00Z",
-    "questions_verified": 1,
-    "structural_fixes": [],
-    "answers_flagged": [
-      "Question 1: explanation mentions H₂SO₄ as checked but only HBr is in answers array"
+    "questions_answered": 1,
+    "answers_overridden": [
+      "Вопрос 1: в исходных данных отмечен только HBr (C); при проверке добавлен H₂SO₄ (E) как вторая верная кислота"
     ],
-    "confidence_adjustments": [
-      "Question 1: 0.98 → 0.75 (answers array inconsistent with explanation)"
-    ],
-    "garbled_text_detected": [],
-    "summary": "1 question verified. 0 structural fixes applied. 1 answer flagged for human review (possible missing answer)."
+    "summary": "Обработан 1 вопрос. 1 решён. 1 отметка исходных данных заменена."
   },
   "questions": [
     {
@@ -230,10 +217,12 @@ If given a single JSON file with multiple question sets (unusual), preserve the 
       "question": "Укажите, какие из данных формул соответствуют кислотам:",
       "choices": ["Fe(OH)₂", "Cs₂O", "HBr", "Na₂CO₃", "H₂SO₄"],
       "answers": [
-        {"id": "C", "value": "HBr"}
+        {"id": "C", "value": "HBr"},
+        {"id": "E", "value": "H₂SO₄"}
       ],
-      "confidence": 0.75,
-      "explanation": "Checked boxes correspond to HBr and H₂SO₄, which are acids.\n\n[VERIFICATION FLAG]\nOriginal answer: HBr (id: C)\nVerifier notes: explanation states 'HBr and H₂SO₄' but only HBr is recorded. H₂SO₄ (id: E) is also an acid and appears to have been marked. Confidence lowered due to this inconsistency.\nAction: awaiting human review"
+      "tags": ["химия"],
+      "confidence": 0.97,
+      "explanation": "Кислоты отдает H⁺. HBr (бромоводородная кислота) и H₂SO₄ (серная кислота) — кислоты; Fe(OH)₂ — основание, Cs₂O — основной оксид, Na₂CO₃ — соль. В исходных данных отмечен только HBr; добавлен H₂SO₄."
     }
   ]
 }
@@ -243,27 +232,30 @@ If given a single JSON file with multiple question sets (unusual), preserve the 
 
 1. Read all input JSON files.
 2. For each question in each file:
-   - Validate and fix structure.
-   - Independently verify the answer.
-   - Re-evaluate confidence.
-   - Check for garbled text.
-   - Build the verified question object (with flags in explanation if needed).
+   - Validate and fix structure (but never edit `question` or `choices` text).
+   - **Solve the question** and write the authoritative answer into `answers`.
+   - Compare with any input marking; override if your solution disagrees.
+   - Set confidence based on your certainty in the answer.
+   - Check for garbled text; reason around it and note it.
+   - If truly unsolvable, leave `answers: []` and record in `_verification.unsolved`.
 3. Assemble the output JSON with `_verification` summary.
 4. Write verified files.
 5. Print batch summary (if multiple files).
 
 ## Common Mistakes
 
-- **Modifying question text or choices.** Never do this — those come from the original image. Only flag garbled text in the explanation.
-- **Changing the answers array.** Flag disagreements in the explanation instead. The human reviewer makes the final call.
-- **Skipping confidence re-evaluation.** Even if the answer is correct, the confidence may be wrong. Re-evaluate every question.
-- **Missing the `_verification` summary.** This is how the human reviewer quickly finds flagged questions. Always include it.
-- **Not checking whether all correct choices are present.** When the question allows multiple answers, verify that every correct choice is in the `answers` array and that no incorrect ones slipped in.
-- **Not detecting internal inconsistencies.** The explanation and the answers array should tell the same story. When they don't, flag it.
+- **Merely flagging a disagreement instead of setting the correct answer.** You are the answerer — write the correct `answers` array directly.
+- **Modifying question text or choices.** Never do this — those come from the original image. Only note garbled text in the explanation.
+- **Copying the input answers verbatim without solving.** The input answers are evidence, not a solution. Always solve independently.
+- **Skipping confidence re-evaluation.** Re-assess every question based on your certainty in your own answer.
+- **Missing the `_verification` summary.** This is how the human reviewer quickly finds overrides and unsolved questions. Always include it.
+- **Not checking multi-answer completeness.** When the question allows several answers, make sure every correct choice is present and no incorrect one slipped in.
+- **Guessing when you cannot solve.** If you genuinely cannot determine the answer, leave `answers: []`, set confidence below 0.5, and record it in `unsolved`.
 
 ## Red Flags
 
-- You feel tempted to rewrite the question text to fix OCR errors — don't, just note it.
-- You're about to change an answer because you're "pretty sure" — flag it instead.
-- You're spending too long on one question — flag it as uncertain and move on. The human will resolve it.
+- You are about to append a `[VERIFICATION FLAG]` note and leave the wrong answer in place — don't. Set the correct answer.
+- You feel tempted to rewrite question text to fix OCR errors — don't, just note it and reason around it.
+- You are copying the extractor's answers without solving — don't. Solve every question.
+- You're spending too long on one question — set your best answer, lower confidence, and move on.
 - The input JSON is so malformed you can't parse it — report the error clearly and stop.

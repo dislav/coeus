@@ -601,3 +601,79 @@ func TestExtractWithRetries_BackoffAbortsOnCancel(t *testing.T) {
 		t.Errorf("elapsed = %v, want < 500ms (abort during first 1s sleep)", elapsed)
 	}
 }
+
+func TestPipeline_FreeResponseInference(t *testing.T) {
+	ext := &fakeExtractor{result: ExtractResult{Questions: []ExtractedQuestion{
+		{Number: 1, Text: "v = ___ м/с", Choices: nil, Answers: nil},
+	}}}
+	p, _, qRepo, _ := testPipeline(&fakeEnhancer{}, ext, &fakeVerifier{}, &fakeEmbedder{embedding: []float32{0.1}})
+
+	if err := p.Run(context.Background(), job()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(qRepo.created) != 1 {
+		t.Fatalf("expected 1 created, got %d", len(qRepo.created))
+	}
+	if qRepo.created[0].Type != domain.QuestionTypeFreeResponse {
+		t.Errorf("Type = %q, want free_response", qRepo.created[0].Type)
+	}
+}
+
+func TestPipeline_MultipleChoiceInference(t *testing.T) {
+	ext := &fakeExtractor{result: ExtractResult{Questions: sampleQuestions()[:1]}}
+	p, _, qRepo, _ := testPipeline(&fakeEnhancer{}, ext, &fakeVerifier{}, &fakeEmbedder{embedding: []float32{0.1}})
+
+	if err := p.Run(context.Background(), job()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(qRepo.created) != 1 {
+		t.Fatalf("expected 1 created, got %d", len(qRepo.created))
+	}
+	if qRepo.created[0].Type != domain.QuestionTypeMultipleChoice {
+		t.Errorf("Type = %q, want multiple_choice", qRepo.created[0].Type)
+	}
+}
+
+func TestPipeline_ErrorPlaceholderIsMultipleChoice(t *testing.T) {
+	ext := &fakeExtractor{result: ExtractResult{}}
+	p, _, qRepo, _ := testPipeline(&fakeEnhancer{}, ext, &fakeVerifier{}, &fakeEmbedder{embedding: []float32{0.1}})
+
+	if err := p.Run(context.Background(), job()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(qRepo.created) != 1 {
+		t.Fatalf("expected 1 placeholder, got %d", len(qRepo.created))
+	}
+	q := qRepo.created[0]
+	if q.Type != domain.QuestionTypeMultipleChoice {
+		t.Errorf("placeholder Type = %q, want multiple_choice", q.Type)
+	}
+	if q.Status != domain.QuestionStatusError {
+		t.Errorf("placeholder Status = %q, want error", q.Status)
+	}
+}
+
+func TestPipeline_VerifyDoesNotReclassifyType(t *testing.T) {
+	ext := &fakeExtractor{result: ExtractResult{Questions: []ExtractedQuestion{
+		{Number: 1, Text: "2+2?", Choices: nil, Answers: nil},
+	}}}
+	ver := &fakeVerifier{result: VerifyResult{
+		Summary: VerificationSummary{Results: []VerifiedQuestion{
+			{Index: 0, Answers: []Answer{{Text: "4"}}, Confidence: 0.9, Explanation: "ok"},
+		}},
+	}}
+	p, _, qRepo, _ := testPipeline(&fakeEnhancer{}, ext, ver, &fakeEmbedder{embedding: []float32{0.1}})
+
+	if err := p.Run(context.Background(), job()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(qRepo.created) != 1 {
+		t.Fatalf("expected 1 created, got %d", len(qRepo.created))
+	}
+	if qRepo.created[0].Type != domain.QuestionTypeFreeResponse {
+		t.Errorf("Type = %q, want free_response (verifier must not reclassify)", qRepo.created[0].Type)
+	}
+	if len(qRepo.updatedFromVer) != 1 {
+		t.Fatalf("expected 1 verification update, got %d", len(qRepo.updatedFromVer))
+	}
+}

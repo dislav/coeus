@@ -11,7 +11,8 @@ type CreateSessionRequest struct {
 // (spec §3.2.2, §3.3).
 type UpdateQuestionRequest struct {
 	Status      string   `json:"status"      binding:"required,oneof=moderation verified error"`
-	Choices     []string `json:"choices"     binding:"required,min=1,dive,required"`
+	Type        string   `json:"type"        binding:"required,oneof=multiple_choice free_response"`
+	Choices     []string `json:"choices"     binding:"dive,required"`
 	Answers     []string `json:"answers"     binding:"required,min=1,dive,required"`
 	Explanation string   `json:"explanation"`
 	Tags        []string `json:"tags,omitempty"`
@@ -23,7 +24,8 @@ type UpdateQuestionRequest struct {
 // free-standing canonical entries, not tied to a session or image.
 type CreateQuestionRequest struct {
 	Question        string   `json:"question" binding:"required"`
-	Choices         []string `json:"choices" binding:"required,min=2"`
+	Type            string   `json:"type" binding:"required,oneof=multiple_choice free_response"`
+	Choices         []string `json:"choices" binding:"dive,required"`
 	Answers         []string `json:"answers" binding:"required,min=1"`
 	ChoiceLabeling  string   `json:"choice_labeling"`
 	Explanation     string   `json:"explanation"`

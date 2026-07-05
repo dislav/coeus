@@ -34,6 +34,7 @@ type fakeQuestionRepo struct {
 		explanation      string
 		conf             float64
 		tags             []string
+		typ              string
 	}
 }
 
@@ -73,6 +74,7 @@ func (f *fakeQuestionRepo) UpdateByExpert(ctx context.Context, id string, upd do
 	f.updateArgs.id, f.updateArgs.expertID = id, expertID
 	f.updateArgs.answers, f.updateArgs.choices = upd.Answers, upd.Choices
 	f.updateArgs.explanation, f.updateArgs.conf, f.updateArgs.tags = upd.Explanation, upd.Confidence, upd.Tags
+	f.updateArgs.typ = upd.Type
 	if f.updateByExpert != nil {
 		return f.updateByExpert(id, upd, expertID)
 	}
@@ -288,7 +290,7 @@ func TestUpdate_ExpertSuccessCallsRepo(t *testing.T) {
 		},
 	}
 	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","answers":["X"],"choices":["X"]}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","type":"multiple_choice","answers":["X"],"choices":["X","Y"]}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d want 200: %s", w.Code, w.Body.String())
 	}
@@ -318,7 +320,7 @@ func TestUpdate_ExpertNotFound404(t *testing.T) {
 		},
 	}
 	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","answers":["X"],"choices":["X"]}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","type":"multiple_choice","answers":["X"],"choices":["X","Y"]}`)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d want 404", w.Code)
 	}
@@ -331,7 +333,7 @@ func TestUpdate_ExpertRepoError500(t *testing.T) {
 		},
 	}
 	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","answers":["X"],"choices":["X"]}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","type":"multiple_choice","answers":["X"],"choices":["X","Y"]}`)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("got %d want 500", w.Code)
 	}
@@ -392,12 +394,12 @@ func TestUpdate_RejectsIncompletePayload400(t *testing.T) {
 
 func TestUpdate_AnswersNotSubsetOfChoices400(t *testing.T) {
 	r := newQuestionRouter("expert", "e1", &fakeQuestionRepo{}, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","choices":["A","B"],"answers":["C"]}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","type":"multiple_choice","choices":["A","B"],"answers":["C"]}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("answers not in choices: got %d want 400", w.Code)
 	}
 	// Case-sensitive: "a" must not match choice "A".
-	w = doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","choices":["A"],"answers":["a"]}`)
+	w = doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","type":"multiple_choice","choices":["A","B"],"answers":["a"]}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("case-sensitive mismatch: got %d want 400", w.Code)
 	}
@@ -405,13 +407,13 @@ func TestUpdate_AnswersNotSubsetOfChoices400(t *testing.T) {
 
 func TestUpdate_ConfidenceOutOfRange400(t *testing.T) {
 	r := newQuestionRouter("expert", "e1", &fakeQuestionRepo{}, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","choices":["A"],"answers":["A"],"confidence":1.5}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","type":"multiple_choice","choices":["A","B"],"answers":["A"],"confidence":1.5}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("confidence > 1: got %d want 400", w.Code)
 	}
 
 	// confidence < 0 is also rejected.
-	w = doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","choices":["A"],"answers":["A"],"confidence":-0.5}`)
+	w = doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","type":"multiple_choice","choices":["A","B"],"answers":["A"],"confidence":-0.5}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("confidence < 0: got %d want 400", w.Code)
 	}
@@ -424,7 +426,7 @@ func TestUpdate_TooManyTags400(t *testing.T) {
 	for i := range tags {
 		tags[i] = "t"
 	}
-	body := fmt.Sprintf(`{"status":"moderation","choices":["A"],"answers":["A"],"tags":%s}`, asJSON(tags))
+	body := fmt.Sprintf(`{"status":"moderation","type":"multiple_choice","choices":["A","B"],"answers":["A"],"tags":%s}`, asJSON(tags))
 	w := doReq(t, r, "PUT", "/api/v1/questions/q1", body)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("too many tags: got %d want 400", w.Code)
@@ -443,7 +445,7 @@ func TestUpdate_ConfidenceAbsentDefaultsToOne(t *testing.T) {
 		},
 	}
 	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","choices":["A"],"answers":["A"]}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"verified","type":"multiple_choice","choices":["A","B"],"answers":["A"]}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d want 200: %s", w.Code, w.Body.String())
 	}
@@ -464,7 +466,7 @@ func TestUpdate_ModerationStatusClearsVerification(t *testing.T) {
 		},
 	}
 	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
-	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"moderation","choices":["A"],"answers":["A"]}`)
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1", `{"status":"moderation","type":"multiple_choice","choices":["A","B"],"answers":["A"]}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d want 200: %s", w.Code, w.Body.String())
 	}
@@ -564,6 +566,7 @@ func TestCreate_ExpertSuccess201Verified(t *testing.T) {
 	r := newQuestionRouterWithEmbedder("expert", "e1", q, &fakeQuestionSessionRepo{}, nil)
 	w := doReq(t, r, "POST", "/api/v1/questions", `{
 		"question":"What is 2+2?",
+		"type":"multiple_choice",
 		"choices":["3","4","5"],
 		"answers":["4"],
 		"tags":["math"]
@@ -627,7 +630,7 @@ func TestCreate_DuplicateHashReturns409WithQuestionID(t *testing.T) {
 	}
 	r := newQuestionRouterWithEmbedder("expert", "e1", q, &fakeQuestionSessionRepo{}, nil)
 	w := doReq(t, r, "POST", "/api/v1/questions", `{
-		"question":"dup","choices":["a","b"],"answers":["a"]
+		"question":"dup","type":"multiple_choice","choices":["a","b"],"answers":["a"]
 	}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("got %d want 409: %s", w.Code, w.Body.String())
@@ -664,7 +667,7 @@ func TestCreate_EmbedderFailureStillCreates201(t *testing.T) {
 	}}
 	r := newQuestionRouterWithEmbedder("expert", "e1", q, &fakeQuestionSessionRepo{}, emb)
 	w := doReq(t, r, "POST", "/api/v1/questions", `{
-		"question":"q","choices":["a","b"],"answers":["a"]
+		"question":"q","type":"multiple_choice","choices":["a","b"],"answers":["a"]
 	}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("got %d want 201 (embed failure must not fail request): %s", w.Code, w.Body.String())
@@ -683,7 +686,7 @@ func TestCreate_EmbedderConfiguredAttachesEmbedding(t *testing.T) {
 	}
 	r := newQuestionRouterWithEmbedder("expert", "e1", q, &fakeQuestionSessionRepo{}, &fakeEmbedder{})
 	w := doReq(t, r, "POST", "/api/v1/questions", `{
-		"question":"q","choices":["a","b"],"answers":["a"]
+		"question":"q","type":"multiple_choice","choices":["a","b"],"answers":["a"]
 	}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("got %d want 201: %s", w.Code, w.Body.String())
@@ -696,7 +699,7 @@ func TestCreate_EmbedderConfiguredAttachesEmbedding(t *testing.T) {
 func TestCreate_InvalidChoiceLabeling400(t *testing.T) {
 	r := newQuestionRouterWithEmbedder("expert", "e1", &fakeQuestionRepo{}, &fakeQuestionSessionRepo{}, nil)
 	w := doReq(t, r, "POST", "/api/v1/questions", `{
-		"question":"q","choices":["a","b"],"answers":["a"],"choice_labeling":"emoji"
+		"question":"q","type":"multiple_choice","choices":["a","b"],"answers":["a"],"choice_labeling":"emoji"
 	}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("got %d want 400", w.Code)
@@ -705,7 +708,7 @@ func TestCreate_InvalidChoiceLabeling400(t *testing.T) {
 
 func TestCreate_ConfidenceOutOfRange400(t *testing.T) {
 	bad := 1.5
-	body := `{"question":"q","choices":["a","b"],"answers":["a"],"confidence":` + jsonFloat(bad) + `}`
+	body := `{"question":"q","type":"multiple_choice","choices":["a","b"],"answers":["a"],"confidence":` + jsonFloat(bad) + `}`
 	r := newQuestionRouterWithEmbedder("expert", "e1", &fakeQuestionRepo{}, &fakeQuestionSessionRepo{}, nil)
 	w := doReq(t, r, "POST", "/api/v1/questions", body)
 	if w.Code != http.StatusBadRequest {
@@ -713,12 +716,12 @@ func TestCreate_ConfidenceOutOfRange400(t *testing.T) {
 	}
 }
 
-func TestCreate_MissingRequiredFields400(t *testing.T) {
+func TestCreate_SingleChoiceMCMustBeRejectedByHandler400(t *testing.T) {
 	r := newQuestionRouterWithEmbedder("expert", "e1", &fakeQuestionRepo{}, &fakeQuestionSessionRepo{}, nil)
-	// choices has only 1 element (< min=2)
-	w := doReq(t, r, "POST", "/api/v1/questions", `{"question":"q","choices":["only"],"answers":["a"]}`)
+	// Single-choice MC: the handler's type-conditional check rejects len(choices) < 2.
+	w := doReq(t, r, "POST", "/api/v1/questions", `{"question":"q","type":"multiple_choice","choices":["only"],"answers":["a"]}`)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("got %d want 400 (choices min=2)", w.Code)
+		t.Fatalf("got %d want 400 (len(choices)<2)", w.Code)
 	}
 }
 
@@ -734,5 +737,175 @@ func jsonFloat(f float64) string {
 }
 
 func validUpdateBody() string {
-	return `{"status":"verified","choices":["A","B"],"answers":["A"],"explanation":"e","tags":["t"],"confidence":0.9}`
+	return `{"status":"verified","type":"multiple_choice","choices":["A","B"],"answers":["A"],"explanation":"e","tags":["t"],"confidence":0.9}`
+}
+
+func TestUpdate_TypeConditionalValidation(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		wantStatus int
+	}{
+		{
+			"mc valid",
+			`{"status":"verified","type":"multiple_choice","choices":["A","B"],"answers":["A"]}`,
+			http.StatusOK,
+		},
+		{
+			"mc one choice",
+			`{"status":"verified","type":"multiple_choice","choices":["A"],"answers":["A"]}`,
+			http.StatusBadRequest,
+		},
+		{
+			"mc answer not in choices",
+			`{"status":"verified","type":"multiple_choice","choices":["A","B"],"answers":["C"]}`,
+			http.StatusBadRequest,
+		},
+		{
+			"fr valid",
+			`{"status":"verified","type":"free_response","choices":[],"answers":["42"]}`,
+			http.StatusOK,
+		},
+		{
+			"fr with choices",
+			`{"status":"verified","type":"free_response","choices":["A"],"answers":["42"]}`,
+			http.StatusBadRequest,
+		},
+		{
+			"missing type",
+			`{"status":"verified","choices":["A","B"],"answers":["A"]}`,
+			http.StatusBadRequest,
+		},
+		{
+			"invalid type",
+			`{"status":"verified","type":"matching","choices":["A","B"],"answers":["A"]}`,
+			http.StatusBadRequest,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q := &fakeQuestionRepo{
+				updateByExpert: func(string, domain.QuestionUpdate, string) error { return nil },
+				expertByID: func(string) (*storage.QuestionExpertView, error) {
+					return &storage.QuestionExpertView{Question: &domain.Question{ID: "q1", Status: domain.QuestionStatusVerified}}, nil
+				},
+			}
+			r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
+			w := doReq(t, r, "PUT", "/api/v1/questions/q1", tc.body)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("got %d want %d: %s", w.Code, tc.wantStatus, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestUpdate_ForwardsTypeToRepo(t *testing.T) {
+	var got domain.QuestionUpdate
+	q := &fakeQuestionRepo{
+		updateByExpert: func(_ string, upd domain.QuestionUpdate, _ string) error {
+			got = upd
+			return nil
+		},
+		expertByID: func(string) (*storage.QuestionExpertView, error) {
+			return &storage.QuestionExpertView{Question: &domain.Question{ID: "q1", Status: domain.QuestionStatusVerified}}, nil
+		},
+	}
+	r := newQuestionRouter("expert", "e1", q, &fakeQuestionSessionRepo{})
+	w := doReq(t, r, "PUT", "/api/v1/questions/q1",
+		`{"status":"verified","type":"free_response","choices":[],"answers":["42"]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d want 200: %s", w.Code, w.Body.String())
+	}
+	if got.Type != domain.QuestionTypeFreeResponse {
+		t.Errorf("forwarded Type = %q, want free_response", got.Type)
+	}
+}
+
+func TestCreate_TypeConditionalValidation(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		wantStatus int
+	}{
+		{
+			"mc valid",
+			`{"question":"q","type":"multiple_choice","choices":["A","B"],"answers":["A"]}`,
+			http.StatusCreated,
+		},
+		{
+			"mc one choice",
+			`{"question":"q","type":"multiple_choice","choices":["A"],"answers":["A"]}`,
+			http.StatusBadRequest,
+		},
+		{
+			"mc answer not in choices",
+			`{"question":"q","type":"multiple_choice","choices":["A","B"],"answers":["C"]}`,
+			http.StatusBadRequest,
+		},
+		{
+			"fr valid",
+			`{"question":"q","type":"free_response","choices":[],"answers":["42"]}`,
+			http.StatusCreated,
+		},
+		{
+			"fr with choices",
+			`{"question":"q","type":"free_response","choices":["A"],"answers":["42"]}`,
+			http.StatusBadRequest,
+		},
+		{
+			"fr answers empty (binding)",
+			`{"question":"q","type":"free_response","choices":[],"answers":[]}`,
+			http.StatusBadRequest,
+		},
+		{
+			"missing type",
+			`{"question":"q","choices":["A","B"],"answers":["A"]}`,
+			http.StatusBadRequest,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q := &fakeQuestionRepo{
+				create: func(context.Context, *domain.Question) (string, error) { return "q-new", nil },
+				expertByID: func(string) (*storage.QuestionExpertView, error) {
+					return &storage.QuestionExpertView{Question: &domain.Question{ID: "q-new", Status: domain.QuestionStatusVerified}}, nil
+				},
+			}
+			r := newQuestionRouterWithEmbedder("expert", "e1", q, &fakeQuestionSessionRepo{}, nil)
+			w := doReq(t, r, "POST", "/api/v1/questions", tc.body)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("%s: got %d want %d: %s", tc.name, w.Code, tc.wantStatus, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreate_FreeResponseNormalizesNilChoices(t *testing.T) {
+	// Omitting "choices" entirely binds nil in Go; Create must normalize to []string{}
+	// so the DB stores '[]' not NULL (spec §3.5.4).
+	var captured *domain.Question
+	q := &fakeQuestionRepo{
+		create: func(_ context.Context, qq *domain.Question) (string, error) {
+			captured = qq
+			return "q-new", nil
+		},
+		expertByID: func(string) (*storage.QuestionExpertView, error) {
+			return &storage.QuestionExpertView{Question: &domain.Question{ID: "q-new", Status: domain.QuestionStatusVerified}}, nil
+		},
+	}
+	r := newQuestionRouterWithEmbedder("expert", "e1", q, &fakeQuestionSessionRepo{}, nil)
+	// "choices" key omitted entirely.
+	w := doReq(t, r, "POST", "/api/v1/questions", `{"question":"q","type":"free_response","answers":["42"]}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("got %d want 201: %s", w.Code, w.Body.String())
+	}
+	if captured == nil {
+		t.Fatal("Create not called")
+	}
+	if captured.Choices == nil {
+		t.Error("Choices is nil; expected normalized []string{}")
+	}
+	if captured.Type != domain.QuestionTypeFreeResponse {
+		t.Errorf("Type = %q, want free_response", captured.Type)
+	}
 }

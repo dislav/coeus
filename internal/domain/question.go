@@ -21,6 +21,12 @@ const (
 	ChoiceLabelingNumber = "number"
 )
 
+// QuestionType values — the MC/FR discriminator (spec §3.1).
+const (
+	QuestionTypeMultipleChoice = "multiple_choice"
+	QuestionTypeFreeResponse   = "free_response"
+)
+
 // QuestionUpdate is the expert-authored full replacement of a question's
 // editable fields (spec §3.2.5). Server-managed fields (id, number, text*,
 // embedding, verified_at, verified_by) are NOT carried here. Status drives the
@@ -32,6 +38,7 @@ type QuestionUpdate struct {
 	Explanation string
 	Tags        []string
 	Confidence  float64
+	Type        string
 }
 
 // Question is the canonical, deduplicated knowledge base entry.
@@ -44,6 +51,7 @@ type Question struct {
 	Choices         []string
 	Answers         []string // value-only, shuffle-safe
 	ChoiceLabeling  string
+	Type            string
 	Confidence      float64
 	Explanation     string
 	Embedding       []float32
@@ -71,6 +79,16 @@ func InferChoiceLabeling(ids []string) string {
 		return ChoiceLabelingLetter
 	}
 	return ChoiceLabelingLetter
+}
+
+// InferQuestionType classifies a question from its extracted choices.
+// Empty (or nil) choices means free-response; any non-empty set means
+// multiple-choice. Applied once at extraction time; the result is persisted.
+func InferQuestionType(choices []string) string {
+	if len(choices) == 0 {
+		return QuestionTypeFreeResponse
+	}
+	return QuestionTypeMultipleChoice
 }
 
 // NormalizeQuestion folds a question string to a canonical form for dedup:

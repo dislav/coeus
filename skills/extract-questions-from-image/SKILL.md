@@ -85,6 +85,55 @@ JSON keys (`number`, `question`, `choices`, etc.) and error `code` values (`unre
 
 > The critical rule: **an empty `answers` array is the correct, expected output for any question whose correct answer is not visually marked.** A blank answer here is not a failure — it tells the downstream model "this question needs to be solved."
 
+## Recognizing Free-Response Questions
+
+Some questions have **no answer choices** — instead they have an **input field** the solver must fill in. These are free-response questions. Emit them with `choices: []`.
+
+### Visual signals that indicate free-response (set `choices: []`)
+
+- Underscore runs or blank lines acting as an answer field:
+  `Ответ: ______`, `Answer: ____`, a trailing blank line.
+- An answer prompt (`Ответ:`, `Answer:`, `=`, `?`) with **no enumerated choices following it**.
+- Digital form placeholders: `[input]`, `[____]`, an empty text box glyph.
+- A gap inside a sentence or equation the solver is meant to fill:
+  `v = ___ м/с`, `The capital of France is ___`.
+
+### Guidance
+
+When these signals are present, **confidently emit `choices: []`**. This is a positive, deliberate recognition — not an absence of data. Keep the surrounding transcription `confidence` high; the missing choices are expected, not a parse failure.
+
+If the image shows a pre-filled answer in the input field (e.g. a worked exam), transcribe it into `answers` as usual. If the field is blank, emit `answers: []` and let the verifier fill it.
+
+### Free-response examples
+
+**Blank field (no visible answer):**
+
+```json
+{
+  "number": 7,
+  "question": "Чему равно ускорение тела через 2 с?",
+  "choices": [],
+  "answers": [],
+  "tags": ["физика"],
+  "confidence": 0.95,
+  "explanation": "Вопрос с открытым ответом; поле ответа пустое."
+}
+```
+
+**Pre-filled answer visible in image:**
+
+```json
+{
+  "number": 7,
+  "question": "Чему равно ускорение тела через 2 с?",
+  "choices": [],
+  "answers": [{"value": "5 м/с²"}],
+  "tags": ["физика"],
+  "confidence": 0.95,
+  "explanation": "Вопрос с открытым ответом; в поле ответа вписано «5 м/с²»."
+}
+```
+
 ## Confidence Scoring (transcription confidence)
 
 Confidence reflects how reliably you read the page, not whether an answer is right:

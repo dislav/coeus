@@ -166,11 +166,25 @@ func (h *QuestionHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Struct-level rule: answers must be a subset of choices, matched by exact,
-	// case-sensitive Go string equality (spec §3.2.3, decision #7).
-	if !answersSubsetOfChoices(req.Answers, req.Choices) {
-		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
-		return
+	// Structural rules are type-conditional (spec §3.5.4). Binding guarantees:
+	//   - req.Type is one of {multiple_choice, free_response}
+	//   - every present choice is non-empty
+	//   - len(req.Answers) >= 1
+	switch req.Type {
+	case domain.QuestionTypeMultipleChoice:
+		if len(req.Choices) < 2 {
+			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+			return
+		}
+		if !answersSubsetOfChoices(req.Answers, req.Choices) {
+			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+			return
+		}
+	case domain.QuestionTypeFreeResponse:
+		if len(req.Choices) != 0 {
+			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+			return
+		}
 	}
 
 	// Field rules: confidence range; tags count + non-empty (spec §3.2.3).
@@ -196,6 +210,7 @@ func (h *QuestionHandler) Update(c *gin.Context) {
 	expertID := c.GetString("user_id")
 	upd := domain.QuestionUpdate{
 		Status:      req.Status,
+		Type:        req.Type,
 		Choices:     req.Choices,
 		Answers:     req.Answers,
 		Explanation: req.Explanation,
@@ -261,6 +276,25 @@ func (h *QuestionHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
 		return
 	}
+
+	// Type-conditional structural validation (spec §3.5.4).
+	switch req.Type {
+	case domain.QuestionTypeMultipleChoice:
+		if len(req.Choices) < 2 {
+			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+			return
+		}
+		if !answersSubsetOfChoices(req.Answers, req.Choices) {
+			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+			return
+		}
+	case domain.QuestionTypeFreeResponse:
+		if len(req.Choices) != 0 {
+			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+			return
+		}
+	}
+
 	confidence := 0.99
 	if req.Confidence != nil {
 		if *req.Confidence < 0 || *req.Confidence > 1 {
@@ -313,14 +347,20 @@ func (h *QuestionHandler) Create(c *gin.Context) {
 	tags = append(tags, req.Tags...)
 	tags = append(tags, "manual-entry")
 
+	choices := req.Choices
+	if choices == nil {
+		choices = []string{}
+	}
+
 	q := &domain.Question{
 		Number:          0,
 		Text:            req.Question,
 		TextNorm:        norm,
 		TextHash:        hash,
-		Choices:         req.Choices,
+		Choices:         choices,
 		Answers:         req.Answers,
 		ChoiceLabeling:  choiceLabeling,
+		Type:            req.Type,
 		Confidence:      confidence,
 		Explanation:     req.Explanation,
 		Embedding:       embedding,
@@ -352,6 +392,7 @@ func toUserResponse(q *storage.QuestionWithSession) dto.UserQuestionResponse {
 		ID:              qq.ID,
 		Number:          q.ExtractedNumber,
 		Question:        qq.Text,
+		Type:            qq.Type,
 		MultipleCorrect: qq.MultipleCorrect(),
 		Choices:         qq.Choices,
 		Answers:         dto.DeriveAnswerRefs(qq.Choices, qq.Answers, qq.ChoiceLabeling),
@@ -370,6 +411,7 @@ func toExpertResponse(ev *storage.QuestionExpertView) dto.ExpertQuestionResponse
 		Choices:               q.Choices,
 		Answers:               q.Answers,
 		ChoiceLabeling:        q.ChoiceLabeling,
+		Type:                  q.Type,
 		Confidence:            q.Confidence,
 		Explanation:           q.Explanation,
 		Tags:                  q.Tags,
@@ -398,6 +440,7 @@ func toExpertResponseFromSession(qws *storage.QuestionWithSession) dto.ExpertQue
 		Choices:         q.Choices,
 		Answers:         q.Answers,
 		ChoiceLabeling:  q.ChoiceLabeling,
+		Type:            q.Type,
 		Confidence:      q.Confidence,
 		Explanation:     q.Explanation,
 		Tags:            q.Tags,

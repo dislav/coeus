@@ -377,6 +377,97 @@ func seedQuestionsFixture(t *testing.T, ctx context.Context, users *UserRepo, se
 
 // --- Top-level integration test for scenarios (a)–(i) ---
 
+func TestQuestionRepo_TypeRoundTrip(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewQuestionRepo(pool)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name    string
+		typ     string
+		choices []string
+	}{
+		{"multiple_choice", domain.QuestionTypeMultipleChoice, []string{"a", "b"}},
+		{"free_response", domain.QuestionTypeFreeResponse, []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := &domain.Question{
+				Number: 1, Text: tc.name, TextNorm: tc.name,
+				TextHash: "type-rt-" + tc.name,
+				Choices: tc.choices, Answers: []string{"ans"},
+				ChoiceLabeling: "letter", Type: tc.typ, Confidence: 0.9,
+				Status: domain.QuestionStatusModeration, Tags: []string{"ai-generated"},
+			}
+			id, err := repo.Create(ctx, q)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+
+			// scanQuestion path (FindByID)
+			got, err := repo.FindByID(ctx, id)
+			if err != nil {
+				t.Fatalf("FindByID: %v", err)
+			}
+			if got.Type != tc.typ {
+				t.Errorf("FindByID Type = %q, want %q", got.Type, tc.typ)
+			}
+
+			// scanQuestionExpert path (FindExpertByID)
+			ev, err := repo.FindExpertByID(ctx, id)
+			if err != nil {
+				t.Fatalf("FindExpertByID: %v", err)
+			}
+			if ev.Type != tc.typ {
+				t.Errorf("FindExpertByID Type = %q, want %q", ev.Type, tc.typ)
+			}
+		})
+	}
+}
+
+func TestQuestionRepo_UpdateByExpertType(t *testing.T) {
+	pool := setupTestDB(t)
+	userRepo := NewUserRepo(pool)
+	repo := NewQuestionRepo(pool)
+	ctx := context.Background()
+
+	user, err := userRepo.Create(ctx, "type-upd@test.com", "hash", "expert")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	q := &domain.Question{
+		Number: 1, Text: "q", TextNorm: "q", TextHash: "type-upd-hash",
+		Choices: []string{"a", "b"}, Answers: []string{"a"}, ChoiceLabeling: "letter",
+		Type: domain.QuestionTypeMultipleChoice, Confidence: 0.9,
+		Status: domain.QuestionStatusModeration, Tags: []string{"ai-generated"},
+	}
+	id, err := repo.Create(ctx, q)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	upd := domain.QuestionUpdate{
+		Status:      domain.QuestionStatusVerified,
+		Choices:     []string{},
+		Answers:     []string{"42"},
+		Explanation: "now free-response",
+		Tags:        []string{},
+		Confidence:  0.95,
+		Type:        domain.QuestionTypeFreeResponse,
+	}
+	if err := repo.UpdateByExpert(ctx, id, upd, user.ID); err != nil {
+		t.Fatalf("UpdateByExpert: %v", err)
+	}
+
+	ev, err := repo.FindExpertByID(ctx, id)
+	if err != nil {
+		t.Fatalf("FindExpertByID after update: %v", err)
+	}
+	if ev.Type != domain.QuestionTypeFreeResponse {
+		t.Errorf("Type after update = %q, want free_response", ev.Type)
+	}
+}
+
 func TestQuestionsIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration: requires Docker")

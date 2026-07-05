@@ -24,6 +24,9 @@ func NewQuestionRepo(pool *pgxpool.Pool) *QuestionRepo {
 var _ storage.QuestionRepo = (*QuestionRepo)(nil)
 
 func (r *QuestionRepo) Create(ctx context.Context, q *domain.Question) (string, error) {
+	if q.Type == "" {
+		q.Type = domain.QuestionTypeMultipleChoice
+	}
 	choicesJSON, _ := json.Marshal(q.Choices)
 	answersJSON, _ := json.Marshal(q.Answers)
 
@@ -35,12 +38,12 @@ func (r *QuestionRepo) Create(ctx context.Context, q *domain.Question) (string, 
 	var id string
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO questions (number, question, question_normalized, question_hash,
-		    choices, answers, choice_labeling, confidence,
+		    choices, answers, choice_labeling, question_type, confidence,
 		    explanation, embedding, status, verified_at, verified_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id
 	`, q.Number, q.Text, q.TextNorm, q.TextHash,
-		choicesJSON, answersJSON, q.ChoiceLabeling,
+		choicesJSON, answersJSON, q.ChoiceLabeling, q.Type,
 		q.Confidence, q.Explanation, embedding, q.Status,
 		q.VerifiedAt, q.VerifiedBy,
 	).Scan(&id)
@@ -231,6 +234,8 @@ func (r *QuestionRepo) FindForUserByID(ctx context.Context, questionID, userID s
 func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, upd domain.QuestionUpdate, expertID string) error {
 	// Defense-in-depth: normalize nil slices to empty so json.Marshal yields a
 	// real array, never null. Validation (handler) is the primary guard.
+	// Type normalization is handled by the SQL CASE below: an empty string
+	// preserves the existing column value.
 	choices := upd.Choices
 	if choices == nil {
 		choices = []string{}
@@ -256,9 +261,10 @@ func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, upd domain
 		    status = $5,
 		    verified_at = CASE WHEN $5 = 'verified' THEN now() ELSE NULL END,
 		    verified_by = CASE WHEN $5 = 'verified' THEN $6::uuid ELSE NULL END,
+		    question_type = CASE WHEN $8 = '' THEN question_type ELSE $8 END,
 		    updated_at = now()
 		WHERE id = $7
-	`, answersJSON, choicesJSON, upd.Explanation, upd.Confidence, upd.Status, expertID, id)
+	`, answersJSON, choicesJSON, upd.Explanation, upd.Confidence, upd.Status, expertID, id, upd.Type)
 	if err != nil {
 		return fmt.Errorf("update by expert: %w", err)
 	}
@@ -408,7 +414,7 @@ func (r *QuestionRepo) getTags(ctx context.Context, questionID string) ([]string
 
 const questionSelectBase = `
 	SELECT q.id, q.number, q.question, q.question_normalized, q.question_hash,
-	       q.choices, q.answers, q.choice_labeling,
+	       q.choices, q.answers, q.choice_labeling, q.question_type,
 	       q.confidence, q.explanation,
 	       to_char(q.verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	       q.verified_by::text,
@@ -421,7 +427,7 @@ const questionSelectBase = `
 // (DISTINCT ON would force ORDER BY q.id first).
 const questionExpertSelectBase = `
 	SELECT q.id, q.number, q.question, q.question_normalized, q.question_hash,
-	       q.choices, q.answers, q.choice_labeling,
+	       q.choices, q.answers, q.choice_labeling, q.question_type,
 	       q.confidence, q.explanation,
 	       to_char(q.verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	       q.verified_by::text,
@@ -438,7 +444,7 @@ const questionExpertSelectBase = `
 // ListForSession and FindForUserByID via scanQuestionWithSession.
 const questionWithSessionSelectBase = `
 	SELECT q.id, q.number, q.question, q.question_normalized, q.question_hash,
-	       q.choices, q.answers, q.choice_labeling,
+	       q.choices, q.answers, q.choice_labeling, q.question_type,
 	       q.confidence, q.explanation,
 	       to_char(q.verified_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	       q.verified_by::text,
@@ -453,7 +459,7 @@ func scanQuestion(row pgx.Row) (*domain.Question, error) {
 	var verifiedAt, verifiedBy *string
 	err := row.Scan(
 		&q.ID, &q.Number, &q.Text, &q.TextNorm, &q.TextHash,
-		&choices, &answers, &q.ChoiceLabeling,
+		&choices, &answers, &q.ChoiceLabeling, &q.Type,
 		&q.Confidence, &q.Explanation, &verifiedAt, &verifiedBy, &q.Status,
 	)
 	if err != nil {
@@ -480,7 +486,7 @@ func scanQuestionExpert(row interface {
 	var hasReport bool
 	if err := row.Scan(
 		&q.ID, &q.Number, &q.Text, &q.TextNorm, &q.TextHash,
-		&choices, &answers, &q.ChoiceLabeling,
+		&choices, &answers, &q.ChoiceLabeling, &q.Type,
 		&q.Confidence, &q.Explanation, &verifiedAt, &verBy, &q.Status,
 		&imageID, &hasReport,
 	); err != nil {
@@ -497,7 +503,7 @@ func scanQuestionExpert(row interface {
 	return ev, nil
 }
 
-// scanQuestionWithSession scans the 17 columns (13 question + 4 link fields)
+// scanQuestionWithSession scans the 18 columns (14 question + 4 link fields)
 // used by ListForSession and FindForUserByID. Accepts both pgx.Row and pgx.Rows.
 func scanQuestionWithSession(row interface {
 	Scan(dest ...any) error
@@ -507,7 +513,7 @@ func scanQuestionWithSession(row interface {
 	var verifiedAt, verifiedBy *string
 	if err := row.Scan(
 		&qws.ID, &qws.Number, &qws.Text, &qws.TextNorm, &qws.TextHash,
-		&choices, &answers, &qws.ChoiceLabeling,
+		&choices, &answers, &qws.ChoiceLabeling, &qws.Type,
 		&qws.Confidence, &qws.Explanation, &verifiedAt, &verifiedBy, &qws.Status,
 		&qws.SessionID, &qws.ImageID, &qws.ExtractedNumber, &qws.ExtractedConfidence,
 	); err != nil {

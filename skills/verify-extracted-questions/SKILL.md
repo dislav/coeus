@@ -103,7 +103,7 @@ Confidence now reflects how certain you are that **your answer is correct** — 
 For questions with `choices: []` (free-response), apply these confidence tiers:
 
 - **Short objective answers** — formulas, numbers, single words, names, units (the common case). Solve at **confidence ≥ 0.80**.
-- **Detailed / subjective answers** — algorithms, proofs, "развернутый ответ", multi-sentence explanations. Produce a **best-effort** answer at **0.50–0.79**. These cannot be graded automatically; the moderate confidence signals "plausible, needs human review."
+- **Detailed / subjective answers** — algorithms, proofs, "развернутый ответ", multi-sentence explanations. Produce a **best-effort** answer at **0.50–0.79**. These typically require human review; the moderate confidence signals "plausible, needs verification."
 
 ### Answer format
 

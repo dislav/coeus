@@ -104,14 +104,33 @@ When these signals are present, **confidently emit `choices: []`**. This is a po
 
 If the image shows a pre-filled answer in the input field (e.g. a worked exam), transcribe it into `answers` as usual. If the field is blank, emit `answers: []` and let the verifier fill it.
 
-### Free-response example
+### Free-response examples
+
+**Blank field (no visible answer):**
 
 ```json
 {
   "number": 7,
   "question": "Чему равно ускорение тела через 2 с?",
   "choices": [],
-  "answers": []
+  "answers": [],
+  "tags": ["физика"],
+  "confidence": 0.95,
+  "explanation": "Вопрос с открытым ответом; поле ответа пустое."
+}
+```
+
+**Pre-filled answer visible in image:**
+
+```json
+{
+  "number": 7,
+  "question": "Чему равно ускорение тела через 2 с?",
+  "choices": [],
+  "answers": [{"value": "5 м/с²"}],
+  "tags": ["физика"],
+  "confidence": 0.95,
+  "explanation": "Вопрос с открытым ответом; в поле ответа вписано «5 м/с²»."
 }
 ```
 

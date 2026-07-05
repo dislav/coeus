@@ -109,7 +109,7 @@ For questions with `choices: []` (free-response), apply these confidence tiers:
 
 Produce **exactly what fills the input field** — include units if implied by the prompt (`2 м/с²`, not `2`), omit surrounding prose. The value must be directly droppable into the blank.
 
-### Garbled Text Detection
+## Garbled Text Detection
 
 The extractor may have produced OCR/extraction errors. Watch for:
 

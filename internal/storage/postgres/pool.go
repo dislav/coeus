@@ -15,6 +15,17 @@ import (
 
 // NewPool creates a PGX connection pool from config.
 func NewPool(ctx context.Context, cfg config.PostgresConfig) (*pgxpool.Pool, error) {
+	// The pool registers the pgvector `vector` type on every connection via the
+	// AfterConnect hook below, which also runs during Ping. The `vector` type
+	// only exists once the pgvector extension is installed, so the extension
+	// MUST be present before the pool is created — otherwise a freshly
+	// initialized database (e.g. a brand-new Docker Compose stack) fails at
+	// startup with "vector type not found in the database" before the app's
+	// migrations (which create the extension) ever run. Ensure it here.
+	if err := ensurePgvectorExtension(ctx, cfg.DSN); err != nil {
+		return nil, fmt.Errorf("ensure pgvector extension: %w", err)
+	}
+
 	pcfg, err := pgxpool.ParseConfig(cfg.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("parse dsn: %w", err)
@@ -38,6 +49,22 @@ func NewPool(ctx context.Context, cfg config.PostgresConfig) (*pgxpool.Pool, err
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
 	return pool, nil
+}
+
+// ensurePgvectorExtension opens a short-lived connection and installs the
+// pgvector extension if it is missing. CREATE EXTENSION IF NOT EXISTS is
+// idempotent, so this is a cheap no-op once the extension exists. Migration
+// 0001_extensions.sql repeats the statement for good measure.
+func ensurePgvectorExtension(ctx context.Context, dsn string) error {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector"); err != nil {
+		return fmt.Errorf("create extension: %w", err)
+	}
+	return nil
 }
 
 // RunMigrations applies all embedded SQL files in order.

@@ -11,7 +11,10 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-func setupTestDB(t *testing.T) *pgxpool.Pool {
+// startTestContainer starts a fresh pgvector Postgres container and returns its
+// connection string. It does NOT create a pool, install the pgvector extension,
+// or run migrations — callers do that themselves. Skips in -short mode.
+func startTestContainer(t *testing.T) string {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -42,6 +45,14 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("get connection string: %v", err)
 	}
+	return connStr
+}
+
+func setupTestDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	ctx := context.Background()
+	connStr := startTestContainer(t)
 
 	pool, err := pgxpool.New(ctx, connStr)
 	if err != nil {

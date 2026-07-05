@@ -30,7 +30,7 @@ upload → enhance → extract → dedup → verify → embed → save
 | Dependency | Version | Install |
 |---|---|---|
 | Go | 1.26+ | [go.dev/dl](https://go.dev/dl/) |
-| PostgreSQL | 15+ with `pgvector` | `brew install postgresql@16` |
+| PostgreSQL | 15+ with `pgvector` | `brew install postgresql@16 pgvector` (the app enables the extension automatically on startup) |
 | libvips | 8.16+ | macOS: `brew install vips pkg-config` / Linux: `sudo apt install libvips-dev` |
 | Docker | any (for Testcontainers tests) | [docker.com](https://docker.com) |
 
@@ -44,9 +44,9 @@ pkg-config --modversion vips
 ### 1. Set up PostgreSQL
 
 ```bash
-# Create database with pgvector extension
+# Create the database. The pgvector extension is enabled automatically by the
+# app on startup — there is no need to run CREATE EXTENSION by hand.
 createdb coeus
-psql coeus -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
 
 ### 2. Set environment variables
@@ -817,7 +817,9 @@ WantedBy=multi-user.target
 ### Production Checklist
 
 - [ ] JWT secret is a random 32+ byte string (not a short password)
-- [ ] PostgreSQL has pgvector extension enabled
+- [ ] PostgreSQL has the `pgvector` extension installed (the app enables it
+  automatically on startup; the connecting role needs `CREATE` privilege on the
+  database)
 - [ ] `COEUS_POSTGRES_DSN` points to a persistent database (not a dev container)
 - [ ] AI API keys are provisioned with appropriate rate limits
 - [ ] `COEUS_WORKERS_COUNT` tuned to match CPU cores and DB connection pool

@@ -16,17 +16,17 @@ postgres:
   min_conns: 4
 
 jwt:
-  access_ttl: 1h
+  access_ttl: 3h
   refresh_ttl: 168h
 
 ai:
   vision:
     model: "kimi-k2.6"
     timeout: 90s
-    thinking: false   # k2.6 defaults to enabled; disabled cuts latency
   reviewer:
     model: "deepseek-v4-pro"
     timeout: 60s
+    effort: "max"
   embedder:
     model: "text-embedding-3-small"
     dim: 1536

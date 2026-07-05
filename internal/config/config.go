@@ -75,6 +75,10 @@ type ReviewerConfig struct {
 	APIKey  string        `yaml:"api_key"`
 	Model   string        `yaml:"model"`
 	Timeout time.Duration `yaml:"timeout"`
+	// Effort sets the reasoning_effort sent to the reviewer model. Empty means
+	// the param is omitted (model default). Accepted values: low|medium|high|max.
+	// "max" is provider-dependent (DeepSeek may reject it).
+	Effort string `yaml:"effort"`
 }
 
 type EmbedderConfig struct {
@@ -142,6 +146,14 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if v := os.Getenv("COEUS_AI_REVIEWER_BASE_URL"); v != "" {
 		cfg.AI.Reviewer.BaseURL = v
+	}
+	if v := os.Getenv("COEUS_AI_REVIEWER_EFFORT"); v != "" {
+		switch e := strings.ToLower(strings.TrimSpace(v)); e {
+		case "low", "medium", "high", "max":
+			cfg.AI.Reviewer.Effort = e
+		default:
+			return fmt.Errorf("invalid COEUS_AI_REVIEWER_EFFORT %q: expected low|medium|high|max", v)
+		}
 	}
 	if v := os.Getenv("COEUS_AI_EMBEDDER_API_KEY"); v != "" {
 		cfg.AI.Embedder.APIKey = v

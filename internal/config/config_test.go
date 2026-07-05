@@ -291,3 +291,38 @@ func TestApplyEnvOverrides_VisionThinkingInvalid(t *testing.T) {
 		t.Fatal("expected error for invalid COEUS_AI_VISION_THINKING, got nil")
 	}
 }
+
+func TestApplyEnvOverrides_ReviewerEffort(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"low", "low", "low"},
+		{"medium", "medium", "medium"},
+		{"high", "high", "high"},
+		{"max", "max", "max"},
+		{"uppercase normalized", "HIGH", "high"},
+		{"padded", "  medium ", "medium"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("COEUS_AI_REVIEWER_EFFORT", tt.in)
+			var cfg Config
+			if err := applyEnvOverrides(&cfg); err != nil {
+				t.Fatalf("applyEnvOverrides: %v", err)
+			}
+			if cfg.AI.Reviewer.Effort != tt.want {
+				t.Errorf("Effort = %q, want %q", cfg.AI.Reviewer.Effort, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyEnvOverrides_ReviewerEffortInvalid(t *testing.T) {
+	t.Setenv("COEUS_AI_REVIEWER_EFFORT", "turbo")
+	var cfg Config
+	if err := applyEnvOverrides(&cfg); err == nil {
+		t.Fatal("expected error for invalid COEUS_AI_REVIEWER_EFFORT, got nil")
+	}
+}

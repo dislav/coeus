@@ -22,6 +22,7 @@ var _ pipeline.AIVerifier = (*Verifier)(nil)
 type Verifier struct {
 	client *openai.Client
 	model  string
+	effort shared.ReasoningEffort
 	log    *slog.Logger
 }
 
@@ -32,6 +33,7 @@ func New(cfg config.ReviewerConfig, log *slog.Logger) *Verifier {
 	return &Verifier{
 		client: oai.NewClient(cfg.BaseURL, cfg.APIKey, cfg.Timeout),
 		model:  cfg.Model,
+		effort: shared.ReasoningEffort(strings.ToLower(strings.TrimSpace(cfg.Effort))),
 		log:    log,
 	}
 }
@@ -60,6 +62,9 @@ func (v *Verifier) Verify(ctx context.Context, questions []pipeline.ExtractedQue
 		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONObject: &rf,
 		},
+	}
+	if v.effort != "" {
+		params.ReasoningEffort = v.effort
 	}
 
 	completion, err := v.client.Chat.Completions.New(ctx, params)

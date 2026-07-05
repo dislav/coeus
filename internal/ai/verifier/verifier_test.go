@@ -166,3 +166,54 @@ func TestVerifier_FencedJSON(t *testing.T) {
 		t.Fatalf("results = %d, want 1 (fence stripped)", len(res.Summary.Results))
 	}
 }
+
+// capturingServer records the decoded request body and returns a minimal valid
+// chat completion so the caller can assert on outbound request fields.
+func capturingServer(t *testing.T, content string) (srv *httptest.Server, body func() map[string]any) {
+	t.Helper()
+	var got map[string]any
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &got)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "chatcmpl-cap",
+			"choices": []map[string]any{{
+				"index":         0,
+				"message":       map[string]any{"role": "assistant", "content": content},
+				"finish_reason": "stop",
+			}},
+		})
+	}))
+	return srv, func() map[string]any { return got }
+}
+
+func TestVerifier_SendsReasoningEffort(t *testing.T) {
+	content := `{"_verification":{"questions_verified":1},"questions":[{"number":1,"question":"q","confidence":0.9,"explanation":"ok"}]}`
+	srv, body := capturingServer(t, content)
+	defer srv.Close()
+
+	cfg := testCfg(srv.URL)
+	cfg.Effort = "high"
+	v := New(cfg, quietLogger())
+	if _, err := v.Verify(context.Background(), sampleInput()[:1]); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if body()["reasoning_effort"] != "high" {
+		t.Errorf("reasoning_effort = %v, want %q", body()["reasoning_effort"], "high")
+	}
+}
+
+func TestVerifier_OmitsReasoningEffortWhenEmpty(t *testing.T) {
+	content := `{"_verification":{"questions_verified":1},"questions":[{"number":1,"question":"q","confidence":0.9,"explanation":"ok"}]}`
+	srv, body := capturingServer(t, content)
+	defer srv.Close()
+
+	v := New(testCfg(srv.URL), quietLogger()) // Effort unset
+	if _, err := v.Verify(context.Background(), sampleInput()[:1]); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if v, ok := body()["reasoning_effort"]; ok {
+		t.Errorf("reasoning_effort should be omitted when Effort is empty, got %v", v)
+	}
+}

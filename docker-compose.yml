@@ -1,0 +1,79 @@
+# Coeus — VPS deployment via Docker Compose.
+#
+# Two services: `db` (PostgreSQL + pgvector) and `app` (Coeus, built from the
+# repo's Dockerfile). The app talks to the DB over Compose's internal network;
+# only the HTTP port is published to the host.
+#
+# Quick start:
+#   1. cp .env.example .env   # then edit the values
+#   2. docker compose up -d --build
+#   3. curl localhost:${COEUS_HTTP_PORT:-8080}/healthz
+#
+# Notes:
+#   - COEUS_POSTGRES_DSN is built automatically from POSTGRES_USER /
+#     POSTGRES_PASSWORD / POSTGRES_DB so it always targets the `db` service.
+#     Do NOT set COEUS_POSTGRES_DSN in .env — it would be ignored.
+#   - Put the app behind nginx/Caddy for TLS termination on a public VPS.
+#   - Compose interpolates ${VAR} in this file. If a secret in .env contains a
+#     literal '$', escape it as '$$'.
+#   - Optional Coeus vars left blank here are treated as "unset" by the app
+#     (it only overrides a config default when the env value is non-empty), so
+#     built-in defaults like the embedder base URL are preserved.
+
+name: coeus
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: coeus-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-coeus}
+      POSTGRES_USER: ${POSTGRES_USER:-coeus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready matches what the app's /readyz probe ultimately pings.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-coeus} -d ${POSTGRES_DB:-coeus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Not published to the host by default — keep Postgres off the public
+    # internet on a VPS. Uncomment to inspect from the host only.
+    # ports:
+    #   - "5432:5432"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: coeus:latest
+    container_name: coeus
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # DSN auto-targets the db service using the shared POSTGRES_* values.
+      COEUS_POSTGRES_DSN: "postgres://${POSTGRES_USER:-coeus}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-coeus}?sslmode=disable"
+      # Required secrets.
+      COEUS_JWT_SECRET: ${COEUS_JWT_SECRET:?COEUS_JWT_SECRET is required in .env}
+      COEUS_AI_VISION_API_KEY: ${COEUS_AI_VISION_API_KEY:?COEUS_AI_VISION_API_KEY is required in .env}
+      COEUS_AI_REVIEWER_API_KEY: ${COEUS_AI_REVIEWER_API_KEY:?COEUS_AI_REVIEWER_API_KEY is required in .env}
+      # Optional — empty is treated as unset by the app (defaults preserved).
+      COEUS_AI_VISION_BASE_URL: ${COEUS_AI_VISION_BASE_URL:-https://api.moonshot.cn/v1}
+      COEUS_AI_REVIEWER_BASE_URL: ${COEUS_AI_REVIEWER_BASE_URL:-https://api.deepseek.com/v1}
+      COEUS_AI_EMBEDDER_API_KEY: ${COEUS_AI_EMBEDDER_API_KEY:-}
+      COEUS_AI_EMBEDDER_BASE_URL: ${COEUS_AI_EMBEDDER_BASE_URL:-}
+      COEUS_SERVER_ADDR: ${COEUS_SERVER_ADDR:-:8080}
+      COEUS_WORKERS_COUNT: ${COEUS_WORKERS_COUNT:-4}
+      COEUS_CORS_ALLOWED_ORIGINS: ${COEUS_CORS_ALLOWED_ORIGINS:-*}
+      COEUS_CORS_ALLOW_CREDENTIALS: ${COEUS_CORS_ALLOW_CREDENTIALS:-false}
+    ports:
+      - "${COEUS_HTTP_PORT:-8080}:8080"
+    # Healthcheck is inherited from the Dockerfile (wget /healthz, 10s interval).
+
+volumes:
+  db-data:

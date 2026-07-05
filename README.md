@@ -591,6 +591,195 @@ curl localhost:8080/healthz   # {"status":"ok"}
 curl localhost:8080/readyz    # {"status":"ready"}  (pings DB)
 ```
 
+### VPS deployment (Docker Compose + Nginx)
+
+For a real VPS, run the app + PostgreSQL in Docker Compose and terminate TLS
+with **Nginx + Certbot installed on the host** (not in containers). The repo
+ships a ready-to-use `docker-compose.yml` and `.env.example`.
+
+```
+Internet ──80/443──► Nginx (host) ──► 127.0.0.1:8080 ──► coeus (container)
+                                                                │
+                                                                ▼
+                                                        coeus-db (container, pgvector)
+```
+
+Prerequisites on the VPS: Docker, Docker Compose, Nginx, and Certbot installed.
+
+#### 1. Configure and start the stack
+
+```bash
+git clone <your-repo-url> coeus && cd coeus
+
+cp .env.example .env
+# Generate a JWT secret and paste it into .env:
+openssl rand -hex 32
+# Edit .env and set: POSTGRES_PASSWORD, COEUS_JWT_SECRET,
+#                    COEUS_AI_VISION_API_KEY, COEUS_AI_REVIEWER_API_KEY
+
+docker compose up -d --build
+```
+
+`docker-compose.yml` builds the app from the `Dockerfile`, starts the `db`
+service, waits for it to be healthy, then starts the app. Migrations run
+automatically on boot. Verify locally (the app publishes `:8080` to the host):
+
+```bash
+curl localhost:8080/healthz   # {"status":"ok"}
+curl localhost:8080/readyz    # {"status":"ready"}  (pings DB)
+docker compose logs -f app    # watch migration/startup output
+```
+
+#### 2. Nginx reverse proxy (HTTP first)
+
+Create `/etc/nginx/sites-available/coeus`:
+
+```nginx
+# HTTP — serves the app and lets Certbot validate the domain before TLS is up.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name coeus.example.com;
+
+    # IMPORTANT: match the app's upload limit. Nginx defaults to 1 MB, which
+    # would reject the 10 MB exam images.
+    client_max_body_size 10m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Vision extraction can run up to 90 s; the server write_timeout is 120 s.
+        proxy_connect_timeout 10s;
+        proxy_send_timeout    120s;
+        proxy_read_timeout    120s;
+    }
+}
+```
+
+Enable, test, and reload:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/coeus /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+The app is now reachable over HTTP at `http://coeus.example.com`. Point the
+domain's A/AAAA records at the VPS first (Certbot needs to reach it).
+
+#### 3. Issue the SSL certificate with Certbot
+
+```bash
+sudo certbot --nginx -d coeus.example.com
+```
+
+Certbot obtains the certificate, then rewrites the Nginx config to listen on
+`:443` with the cert paths and adds an HTTP → HTTPS redirect. When prompted,
+choose option **2** (redirect all traffic to HTTPS). Reload is automatic.
+
+Certificates land in:
+
+```
+/etc/letsencrypt/live/coeus.example.com/fullchain.pem
+/etc/letsencrypt/live/coeus.example.com/privkey.pem
+```
+
+Certbot installs a `systemd` renewal timer automatically — confirm it works:
+
+```bash
+sudo certbot renew --dry-run
+```
+
+#### 4. Verify over HTTPS
+
+```bash
+curl https://coeus.example.com/healthz   # {"status":"ok"}
+curl https://coeus.example.com/readyz    # {"status":"ready"}
+```
+
+#### 5. Firewall
+
+Expose only 80 and 443. The app's `:8080` and PostgreSQL's `:5432` must **not**
+be public — `docker-compose.yml` keeps Postgres on the internal network and the
+app binds to the host only for Nginx to proxy:
+
+```bash
+sudo ufw allow 80,443/tcp
+```
+
+#### Operational notes
+
+- **Upload size** — keep `client_max_body_size` ≥ `upload.max_bytes`
+  (10 MB default). If you raise the limit in `config.yaml`, raise it in Nginx
+  too.
+- **Long requests** — the vision LLM call can take up to 90 s. The
+  `proxy_read_timeout 120s` above matches the server's `write_timeout` so Nginx
+  won't drop an in-flight extraction.
+- **CORS** — if a browser SPA calls the API directly over HTTPS, set specific
+  origins: `COEUS_CORS_ALLOWED_ORIGINS=https://app.example.com`. Enable
+  `COEUS_CORS_ALLOW_CREDENTIALS=true` only with specific origins (never with
+  the wildcard `*` — the app refuses to start).
+- **Updating** — `git pull && docker compose up -d --build` rebuilds and
+  redeploys; migrations run on boot, so there is no separate step.
+- **Logs** — `docker compose logs -f app` (app) / `docker compose logs -f db`
+  (PostgreSQL).
+- **DB access** — to run a query (e.g. promote a user to expert), use
+  `docker exec -it coeus-db psql -U coeus -d coeus`.
+
+<details>
+<summary>Full HTTPS config (if you prefer to write it by hand instead of letting <code>certbot --nginx</code> edit it)</summary>
+
+Obtain the certificate without touching the config, then write the final block:
+
+```bash
+sudo certbot certonly --nginx -d coeus.example.com
+```
+
+```nginx
+# HTTP → HTTPS redirect
+server {
+    listen 80;
+    listen [::]:80;
+    server_name coeus.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name coeus.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/coeus.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/coeus.example.com/privkey.pem;
+
+    client_max_body_size 10m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout    120s;
+        proxy_read_timeout    120s;
+    }
+}
+```
+
+Certbot's `--nginx` plugin injects strong `ssl_protocols` / cipher settings; if
+you go fully manual, generate a hardened SSL profile at
+[Mozilla SSL Configuration Generator](https://ssl-config.mozilla.org/) and add
+it to the `server` block.
+
+</details>
+
 ### Binary (without Docker)
 
 Build a stripped binary:

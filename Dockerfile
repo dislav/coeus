@@ -6,7 +6,6 @@ FROM golang:1.26-bookworm AS builder
 # CGO + libvips build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libc6-dev pkg-config libvips-dev \
-    libheif-plugin-libde265 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -25,11 +24,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # ── Runtime stage ────────────────────────────────────────────
 FROM debian:bookworm-slim
 
-# Runtime: libvips shared libs + HEIC (H.265) decode plugin + CA certs (HTTPS
-# to AI APIs) + wget (healthcheck). libvips42 pulls in libheif1, but HEIC image
-# data is H.265-encoded and needs libheif-plugin-libde265 to decode.
+# Runtime: libvips shared libs + CA certs (HTTPS to AI APIs) + wget (healthcheck).
+# libvips42 transitively installs libheif1, which on bookworm hard-Depends on
+# libde265-0 — so HEIC (H.265) decode works out of the box. (The separate
+# libheif-plugin-libde265 package only exists on trixie/sid's libheif 1.17+.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libvips42 libheif-plugin-libde265 ca-certificates wget \
+    libvips42 ca-certificates wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user

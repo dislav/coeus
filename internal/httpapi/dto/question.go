@@ -8,7 +8,7 @@ import (
 
 // AnswerRef is a user-facing answer carrying a display id derived at read time.
 type AnswerRef struct {
-	ID    string `json:"id"`
+	ID    string `json:"id,omitempty"`
 	Value string `json:"value"`
 }
 
@@ -18,6 +18,7 @@ type UserQuestionResponse struct {
 	ID              string      `json:"id"`
 	Number          int         `json:"number"`
 	Question        string      `json:"question"`
+	Type            string      `json:"type"`
 	MultipleCorrect bool        `json:"multiple_correct"`
 	Choices         []string    `json:"choices"`
 	Answers         []AnswerRef `json:"answers"`
@@ -34,6 +35,7 @@ type ExpertQuestionResponse struct {
 	Choices               []string `json:"choices"`
 	Answers               []string `json:"answers"`
 	ChoiceLabeling        string   `json:"choice_labeling"`
+	Type                  string   `json:"type"`
 	Confidence            float64  `json:"confidence"`
 	Explanation           string   `json:"explanation"`
 	Tags                  []string `json:"tags"`

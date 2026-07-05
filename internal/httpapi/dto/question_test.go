@@ -1,10 +1,39 @@
 package dto
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/vlgrigoriev/coeus/internal/domain"
 )
+
+func TestAnswerRef_IDOmitEmptyForFreeResponse(t *testing.T) {
+	// Free-response: empty choices → idForValue returns "" → id omitted.
+	refs := DeriveAnswerRefs([]string{}, []string{"2 м/с²"}, domain.ChoiceLabelingLetter)
+	out, err := json.Marshal(refs)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(out), `"id"`) {
+		t.Errorf("expected no id key for FR answer, got %s", out)
+	}
+	if !strings.Contains(string(out), `"value":"2 м/с²"`) {
+		t.Errorf("expected value in %s", out)
+	}
+}
+
+func TestAnswerRef_IDPresentForMultipleChoice(t *testing.T) {
+	// MC: answer found in choices → non-empty id → id still emitted.
+	refs := DeriveAnswerRefs([]string{"A", "B"}, []string{"A"}, domain.ChoiceLabelingLetter)
+	out, err := json.Marshal(refs)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(out), `"id":"A"`) {
+		t.Errorf("expected id:A for MC answer, got %s", out)
+	}
+}
 
 func TestDeriveAnswerRefs_LetterLabeling(t *testing.T) {
 	choices := []string{"Fe(OH)2", "Cs2O", "HBr", "Na2CO3", "H2SO4"}

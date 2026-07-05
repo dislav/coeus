@@ -2,7 +2,7 @@
 -- Explicit MC/FR discriminator. Inferred once at extraction time from
 -- len(choices); mirrors the choice_labeling precedent. Editable by experts.
 ALTER TABLE questions
-    ADD COLUMN question_type text NOT NULL DEFAULT 'multiple_choice'
+    ADD COLUMN IF NOT EXISTS question_type text NOT NULL DEFAULT 'multiple_choice'
     CHECK (question_type IN ('multiple_choice', 'free_response'));
 
 -- Backfill: existing non-error rows with empty choices are free-response.

@@ -12,10 +12,13 @@ coeus
 *.md
 docs/
 
-# Agent/skill configuration (not needed at runtime)
+# Agent/skill configuration (not needed at build or runtime).
+# NOTE: the repo-root skills/ directory IS required — it is a Go package
+# (skills/skills.go) embedded into the binary via go:embed and imported by
+# internal/ai/{extractor,verifier}. Do NOT exclude it, or the build fails with
+# "no required module provides package .../coeus/skills".
 .agents
 .opencode
-skills/
 skills-lock.json
 
 # Docker

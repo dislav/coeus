@@ -234,12 +234,8 @@ func (r *QuestionRepo) FindForUserByID(ctx context.Context, questionID, userID s
 func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, upd domain.QuestionUpdate, expertID string) error {
 	// Defense-in-depth: normalize nil slices to empty so json.Marshal yields a
 	// real array, never null. Validation (handler) is the primary guard.
-	// Also normalize empty Type to match the column DEFAULT; the only route an
-	// empty string reaches here is existing PUT callers that don't yet send
-	// question_type (e.g. tests, older clients).
-	if upd.Type == "" {
-		upd.Type = domain.QuestionTypeMultipleChoice
-	}
+	// Type normalization is handled by the SQL CASE below: an empty string
+	// preserves the existing column value.
 	choices := upd.Choices
 	if choices == nil {
 		choices = []string{}
@@ -265,7 +261,7 @@ func (r *QuestionRepo) UpdateByExpert(ctx context.Context, id string, upd domain
 		    status = $5,
 		    verified_at = CASE WHEN $5 = 'verified' THEN now() ELSE NULL END,
 		    verified_by = CASE WHEN $5 = 'verified' THEN $6::uuid ELSE NULL END,
-		    question_type = $8,
+		    question_type = CASE WHEN $8 = '' THEN question_type ELSE $8 END,
 		    updated_at = now()
 		WHERE id = $7
 	`, answersJSON, choicesJSON, upd.Explanation, upd.Confidence, upd.Status, expertID, id, upd.Type)

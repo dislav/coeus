@@ -92,6 +92,9 @@ func TestVerifier_HappyPath(t *testing.T) {
 	if res.Summary.Results[0].Confidence != 0.92 {
 		t.Errorf("q0 confidence = %v, want 0.92", res.Summary.Results[0].Confidence)
 	}
+	if a := res.Summary.Results[0].Answers; len(a) != 1 || a[0].ID != "B" || a[0].Text != "4" {
+		t.Errorf("q0 answers = %+v, want [{ID:B Text:4}]", a)
+	}
 	if res.Summary.Results[1].Confidence != 0.40 {
 		t.Errorf("q1 confidence = %v, want 0.40", res.Summary.Results[1].Confidence)
 	}

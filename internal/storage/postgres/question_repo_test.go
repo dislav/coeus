@@ -133,7 +133,7 @@ func TestQuestionRepo_UpdateFromVerification(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := repo.UpdateFromVerification(ctx, id, 0.75, "original [VERIFICATION FLAG]"); err != nil {
+	if err := repo.UpdateFromVerification(ctx, id, []string{"b-correct"}, 0.75, "original [VERIFICATION FLAG]"); err != nil {
 		t.Fatalf("UpdateFromVerification: %v", err)
 	}
 
@@ -143,6 +143,9 @@ func TestQuestionRepo_UpdateFromVerification(t *testing.T) {
 	}
 	if found.Confidence != 0.75 {
 		t.Errorf("confidence = %v, want 0.75", found.Confidence)
+	}
+	if len(found.Answers) != 1 || found.Answers[0] != "b-correct" {
+		t.Errorf("answers = %v, want [b-correct]", found.Answers)
 	}
 }
 

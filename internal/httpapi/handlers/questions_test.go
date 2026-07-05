@@ -56,7 +56,7 @@ func (f *fakeQuestionRepo) FindExact(ctx context.Context, hash string) (*domain.
 func (f *fakeQuestionRepo) FindSemantic(context.Context, []float32, float64) (*domain.Question, error) {
 	return nil, nil
 }
-func (f *fakeQuestionRepo) UpdateFromVerification(context.Context, string, float64, string) error {
+func (f *fakeQuestionRepo) UpdateFromVerification(context.Context, string, []string, float64, string) error {
 	return nil
 }
 func (f *fakeQuestionRepo) ListForSession(ctx context.Context, sid, st string, l, o int) ([]*storage.QuestionWithSession, error) {

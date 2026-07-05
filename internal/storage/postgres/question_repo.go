@@ -104,11 +104,12 @@ func (r *QuestionRepo) FindSemantic(ctx context.Context, embedding []float32, th
 	return q, nil
 }
 
-func (r *QuestionRepo) UpdateFromVerification(ctx context.Context, id string, confidence float64, explanation string) error {
+func (r *QuestionRepo) UpdateFromVerification(ctx context.Context, id string, answers []string, confidence float64, explanation string) error {
+	answersJSON, _ := json.Marshal(answers)
 	tag, err := r.pool.Exec(ctx, `
-		UPDATE questions SET confidence = $1, explanation = $2, updated_at = now()
-		WHERE id = $3
-	`, confidence, explanation, id)
+		UPDATE questions SET answers = $1, confidence = $2, explanation = $3, updated_at = now()
+		WHERE id = $4
+	`, answersJSON, confidence, explanation, id)
 	if err != nil {
 		return fmt.Errorf("update from verification: %w", err)
 	}

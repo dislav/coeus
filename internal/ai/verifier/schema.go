@@ -72,10 +72,11 @@ func fromPipeline(questions []pipeline.ExtractedQuestion) verificationInput {
 }
 
 // toPipeline maps the model output by position (index = position in the array,
-// matching the input order). Only Confidence and Explanation are consumed into
-// the pipeline's VerifiedQuestion; the rest is for the model's internal
-// consistency and is captured in the raw Report. An i >= inputCount guard
-// prevents mapping beyond the input range.
+// matching the input order). The verifier is the authoritative answerer, so its
+// Answers, Confidence, and Explanation are all consumed into the pipeline's
+// VerifiedQuestion. The remaining fields (question text, choices) exist for the
+// model's internal consistency and are captured only in the raw Report. An
+// i >= inputCount guard prevents mapping beyond the input range.
 func toPipeline(r verificationResponse, inputCount int) pipeline.VerifyResult {
 	out := pipeline.VerifyResult{Report: r.Verification}
 	for i, q := range r.Questions {
@@ -84,9 +85,24 @@ func toPipeline(r verificationResponse, inputCount int) pipeline.VerifyResult {
 		}
 		out.Summary.Results = append(out.Summary.Results, pipeline.VerifiedQuestion{
 			Index:       i,
+			Answers:     mapAnswers(q.Answers),
 			Confidence:  q.Confidence,
 			Explanation: q.Explanation,
 		})
+	}
+	return out
+}
+
+// mapAnswers converts the skill's {id,value} answer shape into the pipeline's
+// Answer{ID,Text}. Returns nil for empty input so the pipeline can distinguish
+// "the verifier solved nothing" from "it returned an explicitly empty answer".
+func mapAnswers(in []answerDTO) []pipeline.Answer {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]pipeline.Answer, len(in))
+	for i, a := range in {
+		out[i] = pipeline.Answer{ID: a.ID, Text: a.Value}
 	}
 	return out
 }

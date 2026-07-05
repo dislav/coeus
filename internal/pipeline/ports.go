@@ -19,8 +19,10 @@ type AIExtractor interface {
 	Extract(ctx context.Context, image []byte, mime string) (ExtractResult, error)
 }
 
-// AIVerifier checks extracted answers against a second model.
-// Failures are best-effort: the caller proceeds with unverified questions.
+// AIVerifier answers extracted questions using a second, reasoning model. It is
+// the authoritative answerer in the pipeline: the extractor only transcribes the
+// image, while the verifier solves each question and returns the canonical
+// answer. Failures are best-effort: the caller proceeds with unverified questions.
 type AIVerifier interface {
 	Verify(ctx context.Context, questions []ExtractedQuestion) (VerifyResult, error)
 }
@@ -69,8 +71,13 @@ type ExtractResult struct {
 
 // VerifiedQuestion is the verification result for one question in the input slice.
 // Index matches the position in the []ExtractedQuestion passed to Verify.
+//
+// Answers holds the verifier's authoritative answer(s). It is nil/empty when the
+// verifier could not solve the question. The pipeline decides whether to persist
+// these or preserve the extractor's stored answer — see resolveVerifiedAnswers.
 type VerifiedQuestion struct {
 	Index       int
+	Answers     []Answer
 	Confidence  float64
 	Explanation string
 }

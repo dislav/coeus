@@ -168,7 +168,7 @@ type fakeQuestionRepo struct {
 	byHash          map[string]*domain.Question // hash → question
 	semantMatch     *domain.Question            // returned by FindSemantic if non-nil
 	created         []*domain.Question
-	updatedFromVer  []struct{ id string; conf float64; expl string }
+	updatedFromVer  []struct{ id string; answers []string; conf float64; expl string }
 	links           []struct{ sessionID, imageID, questionID string; num int; conf float64 }
 	findExactCalls  int
 	findSemantCalls int
@@ -203,8 +203,8 @@ func (r *fakeQuestionRepo) FindSemantic(_ context.Context, _ []float32, _ float6
 	r.findSemantCalls++
 	return r.semantMatch, nil
 }
-func (r *fakeQuestionRepo) UpdateFromVerification(_ context.Context, id string, c float64, e string) error {
-	r.updatedFromVer = append(r.updatedFromVer, struct{ id string; conf float64; expl string }{id, c, e})
+func (r *fakeQuestionRepo) UpdateFromVerification(_ context.Context, id string, answers []string, c float64, e string) error {
+	r.updatedFromVer = append(r.updatedFromVer, struct{ id string; answers []string; conf float64; expl string }{id, answers, c, e})
 	return nil
 }
 func (r *fakeQuestionRepo) ListForSession(context.Context, string, string, int, int) ([]*storage.QuestionWithSession, error) {
@@ -284,8 +284,8 @@ func TestPipeline_HappyPath(t *testing.T) {
 	ext := &fakeExtractor{result: ExtractResult{Questions: sampleQuestions()}}
 	ver := &fakeVerifier{result: VerifyResult{
 		Summary: VerificationSummary{Results: []VerifiedQuestion{
-			{Index: 0, Confidence: 0.95, Explanation: "correct"},
-			{Index: 1, Confidence: 0.90, Explanation: "correct"},
+			{Index: 0, Answers: []Answer{{ID: "B", Text: "solved-1"}}, Confidence: 0.95, Explanation: "correct"},
+			{Index: 1, Answers: []Answer{{ID: "B", Text: "solved-2"}}, Confidence: 0.90, Explanation: "correct"},
 		}},
 		Report: json.RawMessage(`{"score":0.9}`),
 	}}
@@ -307,6 +307,8 @@ func TestPipeline_HappyPath(t *testing.T) {
 	}
 	if len(qRepo.updatedFromVer) != 2 {
 		t.Errorf("expected 2 verifications, got %d", len(qRepo.updatedFromVer))
+	} else if got := qRepo.updatedFromVer[0].answers; len(got) != 1 || got[0] != "solved-1" {
+		t.Errorf("q0 verifier answers not persisted: %v, want [solved-1]", got)
 	}
 	if !ver.called {
 		t.Error("verifier not called")

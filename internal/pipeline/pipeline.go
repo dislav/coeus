@@ -230,7 +230,8 @@ func (p *Pipeline) execute(ctx context.Context, job *domain.Job) error {
 			for _, vq := range vr.Summary.Results {
 				if vq.Index >= 0 && vq.Index < len(newQs) {
 					nq := newQs[vq.Index]
-					if err := p.questions.UpdateFromVerification(ctx, nq.id, vq.Confidence, vq.Explanation); err != nil {
+					answers := resolveVerifiedAnswers(nq.ext.Answers, vq.Answers, vq.Confidence)
+					if err := p.questions.UpdateFromVerification(ctx, nq.id, answerTexts(answers), vq.Confidence, vq.Explanation); err != nil {
 						p.log.Warn("update from verification", "question", nq.id, "error", err)
 					}
 				}
@@ -334,4 +335,32 @@ func answerIDs(answers []Answer) []string {
 		out[i] = a.ID
 	}
 	return out
+}
+
+// verifyConfidenceThreshold is the minimum confidence at which the verifier may
+// override a visually-marked answer that the extractor transcribed from the
+// image. It matches the "likely correct" boundary (0.80) in the
+// verify-extracted-questions skill's confidence rubric. Below it, a marked
+// answer is preserved so a garbled transcription never silently overwrites a
+// correct mark. Candidate for promotion to config.PipelineConfig if per-env
+// tuning is ever needed.
+const verifyConfidenceThreshold = 0.80
+
+// resolveVerifiedAnswers decides which answers to persist after verification.
+//
+// The verifier is authoritative when it returns a confident answer. To stop a
+// garbled transcription from silently overwriting a correct visual marking, the
+// extractor's marked answer is preserved unless the verifier is confident
+// (>= verifyConfidenceThreshold). When there is no marking to protect, the
+// verifier's answer is used even at moderate confidence — any answer beats
+// none. If the verifier could not solve the question at all (no answer), the
+// extractor's stored answer is kept.
+func resolveVerifiedAnswers(extAnswers, verAnswers []Answer, confidence float64) []Answer {
+	if len(verAnswers) == 0 {
+		return extAnswers
+	}
+	if len(extAnswers) > 0 && confidence < verifyConfidenceThreshold {
+		return extAnswers
+	}
+	return verAnswers
 }

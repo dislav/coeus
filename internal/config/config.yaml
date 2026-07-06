@@ -47,5 +47,3 @@ upload:
     - "image/jpeg"
     - "image/png"
     - "image/webp"
-    - "image/heic"  # iPhone photos — transcoded to JPEG at upload time
-    - "image/heif"

@@ -16,7 +16,6 @@ import (
 	"github.com/vlgrigoriev/coeus/internal/config"
 	"github.com/vlgrigoriev/coeus/internal/domain"
 	"github.com/vlgrigoriev/coeus/internal/httpapi/dto"
-	"github.com/vlgrigoriev/coeus/internal/imaging"
 	"github.com/vlgrigoriev/coeus/internal/storage"
 )
 
@@ -58,30 +57,11 @@ func (h *ImageHandler) Upload(c *gin.Context) {
 		return
 	}
 
-	// Sniff actual content type from first 512 bytes.
+	// Sniff actual content type from first 512 bytes
 	mime := http.DetectContentType(data)
-	allowed := h.uploadCfg.AllowedMimesMap()
-
-	if !allowed[strings.ToLower(mime)] {
-		// Go's content sniffer does not recognize HEIC (it returns
-		// application/octet-stream), so iPhone uploads would be rejected here.
-		// Detect HEIC by its ISO BMFF ftyp signature and, when HEIC is an
-		// enabled upload type, transcode to JPEG in place. Storing JPEG means
-		// the browser viewer (GetImage), the enhancer, and the vision extractor
-		// all receive a format they already handle — no HEIC support needed
-		// downstream.
-		if (allowed["image/heic"] || allowed["image/heif"]) && imaging.IsHEIC(data) {
-			jpeg, err := imaging.ConvertToJPEG(data, 92)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
-				return
-			}
-			data = jpeg
-			mime = "image/jpeg"
-		} else {
-			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
-			return
-		}
+	if !h.uploadCfg.AllowedMimesMap()[strings.ToLower(mime)] {
+		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+		return
 	}
 
 	// Decode dimensions (best-effort)

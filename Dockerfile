@@ -24,10 +24,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # ── Runtime stage ────────────────────────────────────────────
 FROM debian:bookworm-slim
 
-# Runtime: libvips shared libs + CA certs (HTTPS to AI APIs) + wget (healthcheck).
-# libvips42 transitively installs libheif1, which on bookworm hard-Depends on
-# libde265-0 — so HEIC (H.265) decode works out of the box. (The separate
-# libheif-plugin-libde265 package only exists on trixie/sid's libheif 1.17+.)
+# Runtime: libvips shared libs + CA certs (HTTPS to AI APIs) + wget (healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libvips42 ca-certificates wget \
     && rm -rf /var/lib/apt/lists/*

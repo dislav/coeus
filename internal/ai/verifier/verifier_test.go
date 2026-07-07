@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/vlgrigoriev/coeus/internal/config"
@@ -218,5 +219,62 @@ func TestVerifier_OmitsReasoningEffortWhenEmpty(t *testing.T) {
 	}
 	if v, ok := body()["reasoning_effort"]; ok {
 		t.Errorf("reasoning_effort should be omitted when Effort is empty, got %v", v)
+	}
+}
+
+// userMessageContent extracts the user message's content string from a captured
+// chat-completions request body, for substring assertions.
+func userMessageContent(t *testing.T, body map[string]any) string {
+	t.Helper()
+	msgs, ok := body["messages"].([]any)
+	if !ok || len(msgs) < 2 {
+		t.Fatalf("unexpected messages shape: %#v", body["messages"])
+	}
+	userMsg, ok := msgs[1].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected user message shape: %#v", msgs[1])
+	}
+	content, _ := userMsg["content"].(string)
+	return content
+}
+
+func TestVerifier_SendsImageContext(t *testing.T) {
+	content := `{"_verification":{"questions_verified":1},"questions":[{"number":1,"question":"q","confidence":0.9,"explanation":"ok"}]}`
+	srv, body := capturingServer(t, content)
+	defer srv.Close()
+
+	input := []pipeline.ExtractedQuestion{
+		{Number: 1, Text: "По графику определите скорость.",
+			Confidence: 0.9, Tags: []string{"физика"},
+			ImageContext: "Ось X: время (с), 0→10. Ось Y: скорость (м/с), 0→20."},
+	}
+	v := New(testCfg(srv.URL), quietLogger())
+	if _, err := v.Verify(context.Background(), input); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	got := userMessageContent(t, body())
+	if !strings.Contains(got, "image_context") {
+		t.Errorf("payload missing image_context key:\n%s", got)
+	}
+	if !strings.Contains(got, "Ось X") {
+		t.Errorf("payload missing transcribed graph data:\n%s", got)
+	}
+}
+
+func TestVerifier_OmitsImageContextWhenEmpty(t *testing.T) {
+	content := `{"_verification":{"questions_verified":1},"questions":[{"number":1,"question":"q","confidence":0.9,"explanation":"ok"}]}`
+	srv, body := capturingServer(t, content)
+	defer srv.Close()
+
+	input := []pipeline.ExtractedQuestion{
+		{Number: 1, Text: "Capital of France?", Confidence: 0.9, Tags: []string{"geography"}},
+	}
+	v := New(testCfg(srv.URL), quietLogger())
+	if _, err := v.Verify(context.Background(), input); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	got := userMessageContent(t, body())
+	if strings.Contains(got, "image_context") {
+		t.Errorf("payload should omit image_context when empty:\n%s", got)
 	}
 }

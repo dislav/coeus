@@ -21,6 +21,7 @@ type questionDTO struct {
 	Confidence      float64     `json:"confidence"`
 	Explanation     string      `json:"explanation"`
 	Tags            []string    `json:"tags,omitempty"`
+	ImageContext    string      `json:"image_context,omitempty"`
 }
 
 // verificationInput is the top-level object sent to the model.
@@ -66,6 +67,7 @@ func fromPipeline(questions []pipeline.ExtractedQuestion) verificationInput {
 			Answers:         answers,
 			Confidence:      q.Confidence,
 			Tags:            q.Tags,
+			ImageContext:    q.ImageContext,
 		}
 	}
 	return out

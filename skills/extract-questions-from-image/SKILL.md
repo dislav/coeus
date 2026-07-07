@@ -45,13 +45,14 @@ Return a single JSON object with this exact structure. Every key shown is requir
       ],
       "tags": ["химия"],
       "confidence": 0.92,
-      "explanation": "Что вы увидели на изображении; без рассуждений (на русском)"
+      "explanation": "Что вы увидели на изображении; без рассуждений (на русском)",
+      "image_context": ""
     }
   ]
 }
 ```
 
-**Required keys for every question object:** `number`, `question`, `choices`, `answers`, `tags`, `confidence`, `explanation`. Do not rename, omit, or replace any of these keys.
+**Required keys for every question object:** `number`, `question`, `choices`, `answers`, `tags`, `confidence`, `explanation`, `image_context`. Do not rename, omit, or replace any of these keys.
 
 ### Field rules
 
@@ -65,6 +66,7 @@ Return a single JSON object with this exact structure. Every key shown is requir
   - For open-ended questions with a visible handwritten/printed answer, record it as `{"value": "the visible answer"}` (no `id`).
 - `confidence`: A number from `0.0` to `1.0` representing your confidence that you **transcribed** the question, choices, and markings correctly. This is about legibility and clarity of what is on the page — **not** about whether an answer is correct. See the rubric below.
 - `explanation`: A brief note, **in Russian**, on what you **observed**, to help the downstream answering model. Describe markings and legibility only. Examples: `"Отмечен вариант C; других отметок нет."`, `"Ответ на изображении не отмечен."`, `"Вариант B частично размыт."`. **Do not include calculations, reasoning, or claims about correctness.**
+- `image_context`: When the question depends on a graph, diagram, table, chart, or figure, transcribe **all concrete visual data** needed to solve it: axes with units, data points/coordinates, table cells, labels, legends, and the curve or shape. Write it at a level of detail sufficient for a text-only solver to reproduce the answer — e.g. `"Ось X: время (с), 0→10. Ось Y: скорость (м/с), 0→20. Точки: (0,0),(2,5),(4,10),(6,15),(8,20). Возрастающая прямая."`. When the question is purely textual and depends on no visual, set `image_context: ""` (empty string — the field is **required**, never omit it). This is transcription, not solving: record what the visual shows, do not compute the answer.
 - `tags`: An array of **lowercase Russian** subject classifiers used downstream for routing and de-duplication. Add it to every question object. Provide at least one tag per question when the subject is identifiable; use `[]` only when it genuinely cannot be determined. Suggested vocabulary: `математика`, `химия`, `физика`, `биология`, `история`, `география`, `медицина`, `литература`, `информатика`. Example: `"tags": ["химия"]`.
 
 ### Output Language
@@ -247,6 +249,25 @@ Output (no answer is marked, so `answers` is empty — the downstream model will
 }
 ```
 
+For an image with a **graph-dependent** question:
+
+```json
+{
+  "questions": [
+    {
+      "number": 3,
+      "question": "По графику определите скорость тела через 2 с после начала движения.",
+      "choices": [],
+      "answers": [],
+      "tags": ["физика"],
+      "confidence": 0.93,
+      "explanation": "Вопрос с открытым ответом; ответ на изображении не отмечен. К графику приложены данные в image_context.",
+      "image_context": "График зависимости скорости от времени. Ось X: время (с), 0→10. Ось Y: скорость (м/с), 0→20. Линия — возрастающая прямая через точки: (0,0), (2,5), (4,10), (6,15), (8,20)."
+    }
+  ]
+}
+```
+
 ## Common Mistakes
 
 - **Solving or guessing an answer when none is visibly marked.** This is the most important mistake to avoid. Leave `answers: []` and let the downstream model solve it.
@@ -259,6 +280,8 @@ Output (no answer is marked, so `answers` is empty — the downstream model will
 - Ignoring image rotation and producing garbled text.
 - Including surrounding page headers, instructions, or stamps as part of the question text.
 - Returning prose instead of the required JSON.
+- **Omitting `image_context` or describing a visual too vaguely.** If a question depends on a graph/table/figure, `image_context` must carry the concrete data (values, coordinates, labels) — `"на графике показана зависимость"` is useless to the downstream solver. Transcribe the actual numbers and labels.
+- **Leaving `image_context` off a question object.** It is a required key; use `""` for purely-textual questions, never drop the key entirely.
 
 ## Red Flags
 

@@ -110,8 +110,8 @@ func (h *QuestionHandler) List(c *gin.Context) {
 		c.JSON(http.StatusForbidden, errorResponse(domain.ErrForbidden))
 		return
 	}
-	tag := c.Query("tag")
-	items, err := h.questions.ListForModerationExpert(c.Request.Context(), status, tag, perPage, offset)
+	search := c.Query("search")
+	items, err := h.questions.ListForModerationExpert(c.Request.Context(), status, search, perPage, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
@@ -353,21 +353,21 @@ func (h *QuestionHandler) Create(c *gin.Context) {
 	}
 
 	q := &domain.Question{
-		Number:          0,
-		Text:            req.Question,
-		TextNorm:        norm,
-		TextHash:        hash,
-		Choices:         choices,
-		Answers:         req.Answers,
-		ChoiceLabeling:  choiceLabeling,
-		Type:            req.Type,
-		Confidence:      confidence,
-		Explanation:     req.Explanation,
-		Embedding:       embedding,
-		Status:          domain.QuestionStatusVerified,
-		VerifiedAt:      &now,
-		VerifiedBy:      &expertID,
-		Tags:            tags,
+		Number:         0,
+		Text:           req.Question,
+		TextNorm:       norm,
+		TextHash:       hash,
+		Choices:        choices,
+		Answers:        req.Answers,
+		ChoiceLabeling: choiceLabeling,
+		Type:           req.Type,
+		Confidence:     confidence,
+		Explanation:    req.Explanation,
+		Embedding:      embedding,
+		Status:         domain.QuestionStatusVerified,
+		VerifiedAt:     &now,
+		VerifiedBy:     &expertID,
+		Tags:           tags,
 	}
 	id, err := h.questions.Create(c.Request.Context(), q)
 	if err != nil {

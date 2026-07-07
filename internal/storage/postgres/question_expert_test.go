@@ -193,3 +193,77 @@ func TestFindExpertByID_ReturnsImageLinkAndReportFlag(t *testing.T) {
 		t.Errorf("has_verification_report: want true")
 	}
 }
+
+// TestListForModerationExpert_SearchMatchesAllFields verifies the universal
+// `search` parameter is a case-insensitive substring matched against the
+// question text, any choice, any answer, and any tag name — and that a term
+// matching nothing returns an empty result set.
+func TestListForModerationExpert_SearchMatchesAllFields(t *testing.T) {
+	ctx := context.Background()
+	pool := setupTestDB(t)
+	questions := NewQuestionRepo(pool)
+
+	// Each question is discoverable through exactly one field.
+	mk := func(text, hash, norm string, choices, answers, tags []string) string {
+		id, err := questions.Create(ctx, &domain.Question{
+			Text:           text,
+			TextHash:       hash,
+			TextNorm:       norm,
+			Status:         domain.QuestionStatusModeration,
+			Choices:        choices,
+			Answers:        answers,
+			Tags:           tags,
+			ChoiceLabeling: "letter",
+		})
+		if err != nil {
+			t.Fatalf("create question %q: %v", text, err)
+		}
+		return id
+	}
+	qByQuestion := mk("What is the capital of France", "h-q", "nq", []string{"x"}, nil, nil)
+	qByChoice := mk("General knowledge", "h-c", "nc", []string{"Photosynthesis"}, nil, nil)
+	qByAnswer := mk("Cell biology", "h-a", "na", []string{"y"}, []string{"Mitochondria"}, nil)
+	qByTag := mk("European history", "h-t", "nt", []string{"z"}, nil, []string{"renaissance"})
+	mk("Pure math", "h-m", "nm", []string{"1"}, nil, nil) // control: matches nothing
+
+	cases := []struct {
+		name   string
+		search string
+		wantID string
+	}{
+		{"question text substring", "CAPITAL of France", qByQuestion},
+		{"choice substring", "photosyn", qByChoice},
+		{"answer substring", "MITOCHOND", qByAnswer},
+		{"tag substring", "NAISSANCE", qByTag},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := questions.ListForModerationExpert(ctx, "", tc.search, 50, 0)
+			if err != nil {
+				t.Fatalf("search %q: %v", tc.search, err)
+			}
+			var found bool
+			for _, ev := range got {
+				if ev.ID == tc.wantID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("search %q: want question %s in results, got %d rows",
+					tc.search, tc.wantID, len(got))
+			}
+		})
+	}
+
+	// A term absent from every field returns nothing.
+	t.Run("no match", func(t *testing.T) {
+		got, err := questions.ListForModerationExpert(ctx, "", "zzz-no-such-term", 50, 0)
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("want 0 results for unmatched term, got %d", len(got))
+		}
+	})
+}

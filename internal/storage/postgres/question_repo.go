@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -167,7 +168,7 @@ func (r *QuestionRepo) FindExpertByID(ctx context.Context, id string) (*storage.
 	return ev, nil
 }
 
-func (r *QuestionRepo) ListForModerationExpert(ctx context.Context, statusFilter, tagFilter string, limit, offset int) ([]*storage.QuestionExpertView, error) {
+func (r *QuestionRepo) ListForModerationExpert(ctx context.Context, statusFilter, searchFilter string, limit, offset int) ([]*storage.QuestionExpertView, error) {
 	query := questionExpertSelectBase
 	args := []interface{}{}
 	idx := 1
@@ -176,15 +177,27 @@ func (r *QuestionRepo) ListForModerationExpert(ctx context.Context, statusFilter
 		args = append(args, statusFilter)
 		idx++
 	}
-	if tagFilter != "" {
-		where := " WHERE"
+	if searchFilter != "" {
+		clause := " WHERE ("
 		if statusFilter != "" {
-			where = " AND"
+			clause = " AND ("
 		}
-		query += fmt.Sprintf(`%s EXISTS (SELECT 1 FROM question_tags qt
-			JOIN tags t ON t.id = qt.tag_id
-			WHERE qt.question_id = q.id AND t.name = $%d)`, where, idx)
-		args = append(args, tagFilter)
+		// Universal substring search across the question text, every choice,
+		// every answer, and any linked tag name. choices/answers are jsonb
+		// arrays; casting to text yields ["a","b"] which ILIKE scans as a flat
+		// string — sufficient for the moderation queue and cheaper than
+		// per-element unnesting. A single parameter is reused across all four
+		// comparisons (pgx positional params may repeat $N).
+		query += fmt.Sprintf(`%s
+			q.question ILIKE $%d
+			OR q.choices::text ILIKE $%d
+			OR q.answers::text ILIKE $%d
+			OR EXISTS (
+				SELECT 1 FROM question_tags qt
+				JOIN tags t ON t.id = qt.tag_id
+				WHERE qt.question_id = q.id AND t.name ILIKE $%d
+			))`, clause, idx, idx, idx, idx)
+		args = append(args, "%"+escapeLike(searchFilter)+"%")
 		idx++
 	}
 	query += fmt.Sprintf(` ORDER BY q.created_at LIMIT $%d OFFSET $%d`, idx, idx+1)
@@ -478,9 +491,9 @@ func scanQuestionExpert(row interface {
 	Scan(dest ...any) error
 }) (*storage.QuestionExpertView, error) {
 	var (
-		q                   domain.Question
-		choices, answers    []byte
-		verifiedAt, verBy   *string
+		q                 domain.Question
+		choices, answers  []byte
+		verifiedAt, verBy *string
 	)
 	var imageID *string
 	var hasReport bool
@@ -524,4 +537,14 @@ func scanQuestionWithSession(row interface {
 	qws.VerifiedAt = verifiedAt
 	qws.VerifiedBy = verifiedBy
 	return qws, nil
+}
+
+// escapeLike escapes characters that have special meaning in LIKE/ILIKE patterns
+// (backslash, percent, underscore) so a user-supplied search term is matched
+// literally. PostgreSQL's default LIKE escape character is the backslash.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }

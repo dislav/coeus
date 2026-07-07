@@ -72,7 +72,10 @@ type QuestionRepo interface {
 	UpdateByExpert(ctx context.Context, id string, upd domain.QuestionUpdate, expertID string) error
 	// Read-side projections for the HTTP surface.
 	FindExpertByID(ctx context.Context, id string) (*QuestionExpertView, error)
-	ListForModerationExpert(ctx context.Context, statusFilter, tagFilter string, limit, offset int) ([]*QuestionExpertView, error)
+	// ListForModerationExpert returns the global moderation queue. searchFilter
+	// is a case-insensitive substring matched against the question text, every
+	// choice, every answer, and any linked tag name.
+	ListForModerationExpert(ctx context.Context, statusFilter, searchFilter string, limit, offset int) ([]*QuestionExpertView, error)
 	FindForUserByID(ctx context.Context, questionID, userID string) (*QuestionWithSession, error)
 	CountUnresolvedForImage(ctx context.Context, imageID string) (int, error)
 	LinkToSession(ctx context.Context, sessionID, imageID, questionID string, number int, confidence float64) error

@@ -11,7 +11,7 @@ Take the JSON output from `extract-questions-from-image` and **answer every ques
 
 **Your `answers` array is authoritative.** Whatever you put in `answers` becomes the canonical answer shown to the user — it replaces the extractor's `answers` (which at most contains what was visually marked in the image, and is often empty). Do not merely "flag" disagreements in a note; **set the correct answer directly.**
 
-This skill does NOT have access to the original image. It works from the extracted JSON, the question text, the choices, and its own domain knowledge.
+This skill does NOT have access to the original image. It works from the extracted JSON, the question text, the choices, its own domain knowledge, and — when present — the `image_context` field, which is a text transcription of any graph/diagram/table/figure the extractor read from the image. Treat `image_context` as authoritative visual data (like `choices` and `answers`) and use it to solve the question.
 
 ## When to Use
 
@@ -39,7 +39,8 @@ One or more JSON files matching the `extract-questions-from-image` output schema
       "answers": [{"id": "A", "value": "..."}],
       "tags": ["химия"],
       "confidence": 0.92,
-      "explanation": "..."
+      "explanation": "...",
+      "image_context": "..."
     }
   ]
 }
@@ -68,7 +69,7 @@ Check and **fix** these issues in the output JSON you produce:
 | No duplicate `number` values | Renumber sequentially if duplicates found |
 | Question numbers are sequential (1, 2, 3...) | Fix gaps but preserve original order; note renumbering in `_verification` |
 
-**Do NOT modify** `question` text, `choices` array content, or `tags`. The `question` and `choices` come from the original image and changing them would distort the source material; the `tags` are lowercase Russian subject classifiers the extractor produced, and they drive downstream routing and de-duplication, so they must be carried through for every question, unchanged. You **may and must** rewrite the `answers` array — that is the whole point of this skill. The only exception for `tags`: if the input had none and the subject is unmistakable, you may add a single lowercase Russian subject tag (e.g. `"химия"`).
+**Do NOT modify** `question` text, `choices` array content, `tags`, or `image_context`. `image_context` is authoritative input data — consume it to solve, never rewrite or paraphrase it. The `question` and `choices` come from the original image and changing them would distort the source material; the `tags` are lowercase Russian subject classifiers the extractor produced, and they drive downstream routing and de-duplication, so they must be carried through for every question, unchanged. You **may and must** rewrite the `answers` array — that is the whole point of this skill. The only exception for `tags`: if the input had none and the subject is unmistakable, you may add a single lowercase Russian subject tag (e.g. `"химия"`).
 
 ### 2. Solve Each Question (your primary job)
 
@@ -79,6 +80,7 @@ For each question, **independently determine the correct answer** using your dom
 - **Multiple-choice with choices:** Pick the correct choice(s). Set `answers` to `{"id": "<letter/number>", "value": "<exact choice text from choices>"}`. The `value` must be copied verbatim from the `choices` array.
 - **Multiple correct answers:** If the question says "choose all that apply" / "один или несколько" / "выберите верные утверждения", include **every** correct choice in `answers` and exclude every incorrect one. Multi-ness is derived from the answer count.
 - **Open-ended (no choices):** Compute or state the answer directly, e.g. `{"value": "2 м/с²"}` (no `id`), and set `choices: []`.
+- **Question with `image_context`:** When `image_context` is non-empty, it contains the concrete data (axes, coordinates, table cells, labels) of a graph/diagram/figure the question depends on. Use it as the visual data needed to solve the question — read values from it, perform calculations on the transcribed data points, etc. It is authoritative; do not reply that you "cannot retrieve the image" — the data is already transcribed for you.
 - **Calculation required:** Show the work briefly in `explanation` (formulas, substitution, result), then put the final answer in `answers`.
 
 **How to treat the input answers (evidence from the image):**
@@ -270,3 +272,4 @@ When given multiple files or a directory:
 - You are copying the extractor's answers without solving — don't. Solve every question.
 - You're spending too long on one question — set your best answer, lower confidence, and move on.
 - The input JSON is so malformed you can't parse it — report the error clearly and stop.
+- **Ignoring `image_context` for graph/figure questions.** When `image_context` is present, it carries the visual data you need. Do not reply "I cannot retrieve the image" — the data is already transcribed in `image_context`. Use it.

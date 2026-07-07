@@ -24,6 +24,7 @@ type questionDTO struct {
 	Confidence      float64     `json:"confidence"`
 	Explanation     string      `json:"explanation"`
 	Tags            []string    `json:"tags,omitempty"`
+	ImageContext    string      `json:"image_context,omitempty"`
 }
 
 type extractionErrorDTO struct {
@@ -80,6 +81,7 @@ func toPipeline(r extractionResponse) pipeline.ExtractResult {
 			Answers:         mapAnswers(q.Answers),
 			Confidence:      q.Confidence,
 			Tags:            q.Tags,
+			ImageContext:    q.ImageContext,
 		}
 	}
 	return res

@@ -45,7 +45,8 @@ type ExtractedQuestion struct {
 	Choices         []Answer
 	Answers         []Answer
 	Confidence      float64  `json:"confidence,omitempty"`
-	Tags            []string `json:"tags,omitempty"` // subject tags from Kimi
+	Tags            []string `json:"tags,omitempty"`          // subject tags from Kimi
+	ImageContext    string   `json:"image_context,omitempty"` // transcribed graph/figure data for the text-only verifier
 }
 
 // ExtractionErrorCode identifies why extraction failed or was partial.

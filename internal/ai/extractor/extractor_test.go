@@ -325,3 +325,55 @@ func TestExtractor_ThinkingEnabledOmitsKey(t *testing.T) {
 		t.Errorf("thinking-enabled request still uses ms:// reference:\n%s", *body)
 	}
 }
+
+func TestExtractor_ImageContextMapped(t *testing.T) {
+	content := `{
+		"questions": [
+			{"number":1,"question":"По графику определите скорость через 2 с.",
+			 "choices":[],"answers":[],
+			 "confidence":0.9,"explanation":"график приложен","tags":["физика"],
+			 "image_context":"Ось X: время (с), 0→10. Ось Y: скорость (м/с), 0→20. Точки: (0,0),(2,5)."}
+		]
+	}`
+	srv, _, _, _ := kimiServer(t, http.StatusOK, content)
+	defer srv.Close()
+
+	e := New(testCfg(srv.URL, 30*time.Second), quietLogger())
+	res, err := e.Extract(context.Background(), []byte("img"), "image/png")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(res.Questions) != 1 {
+		t.Fatalf("questions = %d, want 1", len(res.Questions))
+	}
+	q := res.Questions[0]
+	if q.ImageContext == "" {
+		t.Fatal("ImageContext empty, want transcribed graph data")
+	}
+	if !strings.Contains(q.ImageContext, "Ось X") {
+		t.Errorf("ImageContext = %q, want to contain axis data", q.ImageContext)
+	}
+}
+
+func TestExtractor_ImageContextAbsentDefaultsEmpty(t *testing.T) {
+	content := `{
+		"questions": [
+			{"number":1,"question":"Capital of France?","choices":["Paris"],"answers":[],
+			 "confidence":0.9,"explanation":"x","tags":["geography"]}
+		]
+	}`
+	srv, _, _, _ := kimiServer(t, http.StatusOK, content)
+	defer srv.Close()
+
+	e := New(testCfg(srv.URL, 30*time.Second), quietLogger())
+	res, err := e.Extract(context.Background(), []byte("img"), "image/png")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(res.Questions) != 1 {
+		t.Fatalf("questions = %d, want 1", len(res.Questions))
+	}
+	if res.Questions[0].ImageContext != "" {
+		t.Errorf("ImageContext = %q, want empty when absent", res.Questions[0].ImageContext)
+	}
+}

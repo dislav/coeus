@@ -14,6 +14,8 @@ var (
 	ErrUnauthorized   = NewError("unauthorized", "authentication required")
 	ErrForbidden      = NewError("forbidden", "insufficient role")
 	ErrAIUnavailable  = NewError("ai_unavailable", "AI service unavailable")
+	ErrSelfForbidden  = NewError("self_forbidden", "admin cannot change their own role or active state")
+	ErrLastAdmin      = NewError("last_admin", "operation would remove the last active admin")
 )
 
 // Error is a typed domain error carrying a stable code for API responses.
@@ -39,6 +41,8 @@ func HTTPStatus(err error) int {
 	case "session_expired":
 		return http.StatusGone
 	case "duplicate":
+		return http.StatusConflict
+	case "self_forbidden", "last_admin", "question_in_use":
 		return http.StatusConflict
 	case "validation":
 		return http.StatusBadRequest

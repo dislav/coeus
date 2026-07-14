@@ -29,6 +29,34 @@ func TestErrorHTTPStatusMapping(t *testing.T) {
 	}
 }
 
+func TestHTTPStatus_NewConflictCodes(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"self_forbidden sentinel", ErrSelfForbidden, 409},
+		{"last_admin sentinel", ErrLastAdmin, 409},
+		{"question_in_use dynamic", NewError("question_in_use", "linked to 3 session(s)"), 409},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HTTPStatus(tc.err); got != tc.want {
+				t.Errorf("HTTPStatus(%s) = %d, want %d", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNewErrorSentinelMessages(t *testing.T) {
+	if ErrSelfForbidden.Code != "self_forbidden" {
+		t.Errorf("ErrSelfForbidden.Code = %q", ErrSelfForbidden.Code)
+	}
+	if ErrLastAdmin.Code != "last_admin" {
+		t.Errorf("ErrLastAdmin.Code = %q", ErrLastAdmin.Code)
+	}
+}
+
 func TestErrorsIs(t *testing.T) {
 	wrapped := errors.Join(ErrNotFound, errors.New("question 123"))
 	if !errors.Is(wrapped, ErrNotFound) {

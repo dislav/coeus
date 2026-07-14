@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/vlgrigoriev/coeus/internal/auth"
 	"github.com/vlgrigoriev/coeus/internal/domain"
 	"github.com/vlgrigoriev/coeus/internal/storage"
 )
@@ -244,6 +245,30 @@ func (r *UserRepo) Delete(ctx context.Context, id, callerID string) error {
 		return fmt.Errorf("commit delete user: %w", err)
 	}
 	return nil
+}
+
+func (r *UserRepo) ResetPassword(ctx context.Context, id string) (string, error) {
+	// 404 first (spec: not_found if target absent).
+	if _, err := r.FindByID(ctx, id); err != nil {
+		return "", err
+	}
+
+	plaintext, err := auth.GeneratePassword()
+	if err != nil {
+		return "", fmt.Errorf("reset password generate: %w", err)
+	}
+	hash, err := auth.HashPassword(plaintext)
+	if err != nil {
+		return "", fmt.Errorf("reset password hash: %w", err)
+	}
+
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE users SET password_hash = $1, token_version = token_version + 1
+		WHERE id = $2
+	`, hash, id); err != nil {
+		return "", fmt.Errorf("reset password exec: %w", err)
+	}
+	return plaintext, nil
 }
 
 // isUniqueViolation checks if err is a Postgres unique_violation (SQLSTATE 23505).

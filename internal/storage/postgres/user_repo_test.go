@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/vlgrigoriev/coeus/internal/auth"
 	"github.com/vlgrigoriev/coeus/internal/domain"
 	"github.com/vlgrigoriev/coeus/internal/storage"
 )
@@ -327,6 +328,50 @@ func TestUserRepo_Delete_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	err := repo.Delete(ctx, "00000000-0000-0000-0000-000000000000", "caller")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUserRepo_ResetPassword(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	target, _ := repo.Create(ctx, "rp@example.com", "old-hash", "user")
+
+	plaintext, err := repo.ResetPassword(ctx, target.ID)
+	if err != nil {
+		t.Fatalf("reset password: %v", err)
+	}
+	if len(plaintext) != 20 {
+		t.Errorf("len(plaintext) = %d, want 20", len(plaintext))
+	}
+
+	// token_version bumped from 0 to 1.
+	after, _ := repo.FindByID(ctx, target.ID)
+	if after.TokenVersion != 1 {
+		t.Errorf("TokenVersion = %d, want 1", after.TokenVersion)
+	}
+	// active untouched.
+	if !after.Active {
+		t.Errorf("Active = false, want true (reset must not deactivate)")
+	}
+	// A NEW bcrypt hash replaced the old one and verifies the plaintext.
+	if after.PasswordHash == "old-hash" {
+		t.Error("password_hash was not replaced")
+	}
+	if !auth.VerifyPassword(after.PasswordHash, plaintext) {
+		t.Error("new hash does not verify the generated plaintext")
+	}
+}
+
+func TestUserRepo_ResetPassword_NotFound(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	_, err := repo.ResetPassword(ctx, "00000000-0000-0000-0000-000000000000")
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}

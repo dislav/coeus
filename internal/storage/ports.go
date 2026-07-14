@@ -58,6 +58,7 @@ type UserRepo interface {
 	List(ctx context.Context, filter UserFilter, limit, offset int) ([]*User, error)
 	Update(ctx context.Context, id string, upd UserUpdate, callerID string) (*User, error)
 	Delete(ctx context.Context, id, callerID string) error
+	ResetPassword(ctx context.Context, id string) (string, error)
 }
 
 // SessionRepo manages session records.

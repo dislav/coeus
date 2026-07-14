@@ -88,7 +88,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	token, err := h.jwtMgr.Issue(user.ID, user.Role)
+	token, err := h.jwtMgr.Issue(user.ID, user.Role, user.Active, user.TokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
@@ -98,14 +98,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 }
 
 func (h *AuthHandler) Refresh(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	role, _ := c.Get("role")
+	v, _ := c.Get("user")
+	user := v.(*storage.User)
 
-	token, err := h.jwtMgr.Issue(userID.(string), role.(string))
+	token, err := h.jwtMgr.Issue(user.ID, user.Role, user.Active, user.TokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
 
-	c.JSON(http.StatusOK, authResponse{Token: token, Role: role.(string)})
+	c.JSON(http.StatusOK, authResponse{Token: token, Role: user.Role})
 }

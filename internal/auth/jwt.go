@@ -10,8 +10,10 @@ import (
 
 // Claims is the JWT payload carrying user identity and role.
 type Claims struct {
-	UserID string `json:"sub"`
-	Role   string `json:"role"`
+	UserID       string `json:"sub"`
+	Role         string `json:"role"`
+	Active       bool   `json:"active"`
+	TokenVersion int64  `json:"ver"`
 	jwt.RegisteredClaims
 }
 
@@ -24,10 +26,12 @@ func NewJWTManager(cfg config.JWTConfig) *JWTManager {
 	return &JWTManager{secret: []byte(cfg.Secret), accessTTL: cfg.AccessTTL}
 }
 
-func (m *JWTManager) Issue(userID, role string) (string, error) {
+func (m *JWTManager) Issue(userID, role string, active bool, tokenVersion int64) (string, error) {
 	claims := Claims{
-		UserID: userID,
-		Role:   role,
+		UserID:       userID,
+		Role:         role,
+		Active:       active,
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(m.accessTTL)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

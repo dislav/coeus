@@ -72,7 +72,7 @@ func (s *Server) registerRoutes() {
 	{
 		authGroup.POST("/register", authHandler.Register)
 		authGroup.POST("/login", authHandler.Login)
-		authGroup.POST("/refresh", AuthMiddleware(s.jwtMgr), authHandler.Refresh)
+		authGroup.POST("/refresh", AuthMiddleware(s.jwtMgr, s.userRepo), authHandler.Refresh)
 	}
 
 	// Sessions + Images (auth required)
@@ -80,7 +80,7 @@ func (s *Server) registerRoutes() {
 	imageHandler := handlers.NewImageHandler(s.imageRepo, s.jobQueue, s.uploadCfg)
 
 	apiGroup := r.Group("/api/v1")
-	apiGroup.Use(AuthMiddleware(s.jwtMgr))
+	apiGroup.Use(AuthMiddleware(s.jwtMgr, s.userRepo))
 	{
 		sessions := apiGroup.Group("/sessions")
 		{

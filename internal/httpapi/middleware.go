@@ -14,7 +14,7 @@ import (
 	"github.com/vlgrigoriev/coeus/internal/storage"
 )
 
-func AuthMiddleware(jwtMgr *auth.JWTManager) gin.HandlerFunc {
+func AuthMiddleware(jwtMgr *auth.JWTManager, users storage.UserRepo) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		if header == "" || !strings.HasPrefix(header, "Bearer ") {
@@ -27,21 +27,46 @@ func AuthMiddleware(jwtMgr *auth.JWTManager) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, apiError(domain.ErrUnauthorized))
 			return
 		}
+
+		// Stateless per-request revalidation against the live row.
+		user, err := users.FindByID(c.Request.Context(), claims.UserID)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, apiError(domain.ErrUnauthorized))
+			return
+		}
+		if !tokenValid(claims, user) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, apiError(domain.ErrUnauthorized))
+			return
+		}
+
 		c.Set("claims", claims)
 		c.Set("user_id", claims.UserID)
 		c.Set("role", claims.Role)
+		c.Set("user", user)
 		c.Next()
 	}
 }
 
-func RoleGuard(requiredRole string) gin.HandlerFunc {
+// tokenValid reports whether the JWT claims still match the live user row.
+// Pure (no DB) so it is unit-testable in isolation.
+func tokenValid(claims *auth.Claims, user *storage.User) bool {
+	return claims.Active == user.Active && claims.TokenVersion == user.TokenVersion
+}
+
+func RoleGuard(allowedRoles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role, exists := c.Get("role")
-		if !exists || role.(string) != requiredRole {
+		if !exists {
 			c.AbortWithStatusJSON(http.StatusForbidden, apiError(domain.ErrForbidden))
 			return
 		}
-		c.Next()
+		for _, allowed := range allowedRoles {
+			if role.(string) == allowed {
+				c.Next()
+				return
+			}
+		}
+		c.AbortWithStatusJSON(http.StatusForbidden, apiError(domain.ErrForbidden))
 	}
 }
 

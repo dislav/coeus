@@ -26,7 +26,7 @@ func (m *mockUserRepo) Create(_ context.Context, email, hash, role string) (*sto
 	if _, ok := m.users[email]; ok {
 		return nil, fmt.Errorf("create: %w", domain.ErrDuplicate)
 	}
-	u := &storage.User{ID: uuid.NewString(), Email: email, PasswordHash: hash, Role: role}
+	u := &storage.User{ID: uuid.NewString(), Email: email, PasswordHash: hash, Role: role, Active: true}
 	m.users[email] = u
 	return u, nil
 }

@@ -99,6 +99,7 @@ type QuestionRepo interface {
 	FindForUserByID(ctx context.Context, questionID, userID string) (*QuestionWithSession, error)
 	CountUnresolvedForImage(ctx context.Context, imageID string) (int, error)
 	LinkToSession(ctx context.Context, sessionID, imageID, questionID string, number int, confidence float64) error
+	Delete(ctx context.Context, id string) error
 }
 
 // JobQueue manages the Postgres-backed job queue.

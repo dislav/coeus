@@ -90,6 +90,7 @@ func (f *fakeQuestionRepo) FindExpertByID(ctx context.Context, id string) (*stor
 func (f *fakeQuestionRepo) FindForUserByID(ctx context.Context, qid, uid string) (*storage.QuestionWithSession, error) {
 	return f.forUserByID(qid, uid)
 }
+func (f *fakeQuestionRepo) Delete(context.Context, string) error { return nil }
 
 type fakeQuestionSessionRepo struct {
 	byID func(id string) (*domain.Session, error)

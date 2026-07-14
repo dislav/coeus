@@ -73,3 +73,36 @@ func TestUserRepo_FindByID(t *testing.T) {
 		t.Errorf("role = %q", found.Role)
 	}
 }
+
+func TestUserRepo_NewColumnsPopulated(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	created, err := repo.Create(ctx, "cols@example.com", "hash", "user")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !created.Active {
+		t.Errorf("created.Active = false, want true")
+	}
+	if created.TokenVersion != 0 {
+		t.Errorf("created.TokenVersion = %d, want 0", created.TokenVersion)
+	}
+
+	byEmail, err := repo.FindByEmail(ctx, "cols@example.com")
+	if err != nil {
+		t.Fatalf("find by email: %v", err)
+	}
+	if !byEmail.Active || byEmail.TokenVersion != 0 {
+		t.Errorf("by email: Active=%v TokenVersion=%d", byEmail.Active, byEmail.TokenVersion)
+	}
+
+	byID, err := repo.FindByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("find by id: %v", err)
+	}
+	if !byID.Active || byID.TokenVersion != 0 {
+		t.Errorf("by id: Active=%v TokenVersion=%d", byID.Active, byID.TokenVersion)
+	}
+}

@@ -13,6 +13,8 @@ type User struct {
 	Email        string
 	PasswordHash string
 	Role         string
+	Active       bool
+	TokenVersion int64
 	CreatedAt    string
 }
 

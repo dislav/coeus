@@ -664,7 +664,7 @@ func TestQuestionsIntegration(t *testing.T) {
 	t.Run("(f) PUT complete payload updates every editable field", func(t *testing.T) {
 		rExp := newIntQuestionRouter("expert", f.expert.ID, questions, sessions)
 		w := intDoReq(t, rExp, "PUT", "/api/v1/questions/"+f.qAModID,
-			`{"status":"verified","choices":["X","Y","Z"],"answers":["X","Y"],"explanation":"new expl","tags":["tag1","tag2"],"confidence":0.85}`)
+			`{"status":"verified","type":"multiple_choice","choices":["X","Y","Z"],"answers":["X","Y"],"explanation":"new expl","tags":["tag1","tag2"],"confidence":0.85}`)
 		if w.Code != http.StatusOK {
 			t.Fatalf("PUT complete: got %d want 200: %s", w.Code, w.Body.String())
 		}
@@ -698,7 +698,7 @@ func TestQuestionsIntegration(t *testing.T) {
 
 		// Start from qAErr (status=error). Transition: error → verified.
 		w := intDoReq(t, rExp, "PUT", "/api/v1/questions/"+f.qAErrID,
-			`{"status":"verified","choices":["A","B"],"answers":["A"]}`)
+			`{"status":"verified","type":"multiple_choice","choices":["A","B"],"answers":["A"]}`)
 		if w.Code != http.StatusOK {
 			t.Fatalf("PUT verified: %d: %s", w.Code, w.Body.String())
 		}
@@ -718,7 +718,7 @@ func TestQuestionsIntegration(t *testing.T) {
 
 		// verified → moderation => both NULL.
 		w = intDoReq(t, rExp, "PUT", "/api/v1/questions/"+f.qAErrID,
-			`{"status":"moderation","choices":["A","B"],"answers":["A"]}`)
+			`{"status":"moderation","type":"multiple_choice","choices":["A","B"],"answers":["A"]}`)
 		if w.Code != http.StatusOK {
 			t.Fatalf("PUT moderation: %d: %s", w.Code, w.Body.String())
 		}
@@ -735,7 +735,7 @@ func TestQuestionsIntegration(t *testing.T) {
 
 		// moderation → error => both NULL.
 		w = intDoReq(t, rExp, "PUT", "/api/v1/questions/"+f.qAErrID,
-			`{"status":"error","choices":["A","B"],"answers":["A"]}`)
+			`{"status":"error","type":"multiple_choice","choices":["A","B"],"answers":["A"]}`)
 		if w.Code != http.StatusOK {
 			t.Fatalf("PUT error: %d: %s", w.Code, w.Body.String())
 		}

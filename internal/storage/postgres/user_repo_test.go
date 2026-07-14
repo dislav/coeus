@@ -279,3 +279,55 @@ func TestUserRepo_Update_NotFound(t *testing.T) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestUserRepo_Delete_HappyPath(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	target, _ := repo.Create(ctx, "del@example.com", "h", "user")
+	caller, _ := repo.Create(ctx, "del-caller@example.com", "h", "admin")
+
+	if err := repo.Delete(ctx, target.ID, caller.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := repo.FindByID(ctx, target.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("after delete, FindByID err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUserRepo_Delete_SelfForbidden(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	self, _ := repo.Create(ctx, "del-self@example.com", "h", "admin")
+	err := repo.Delete(ctx, self.ID, self.ID)
+	if !errors.Is(err, domain.ErrSelfForbidden) {
+		t.Errorf("err = %v, want ErrSelfForbidden", err)
+	}
+}
+
+func TestUserRepo_Delete_LastAdmin(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	only, _ := repo.Create(ctx, "del-only@example.com", "h", "admin")
+	caller, _ := repo.Create(ctx, "del-caller2@example.com", "h", "user") // non-admin caller: exactly one admin exists
+	err := repo.Delete(ctx, only.ID, caller.ID)
+	if !errors.Is(err, domain.ErrLastAdmin) {
+		t.Errorf("err = %v, want ErrLastAdmin", err)
+	}
+}
+
+func TestUserRepo_Delete_NotFound(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	err := repo.Delete(ctx, "00000000-0000-0000-0000-000000000000", "caller")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}

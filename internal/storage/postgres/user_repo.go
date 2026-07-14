@@ -205,6 +205,47 @@ func (r *UserRepo) Update(ctx context.Context, id string, upd storage.UserUpdate
 	return &updated, nil
 }
 
+func (r *UserRepo) Delete(ctx context.Context, id, callerID string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete user: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var role string
+	var active bool
+	err = tx.QueryRow(ctx, `SELECT role, active FROM users WHERE id = $1 FOR UPDATE`, id).Scan(&role, &active)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("delete user: %w", domain.ErrNotFound)
+		}
+		return fmt.Errorf("delete user select: %w", err)
+	}
+
+	if id == callerID {
+		return fmt.Errorf("delete user: %w", domain.ErrSelfForbidden)
+	}
+
+	if role == "admin" && active {
+		var activeAdmins int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM users WHERE role = 'admin' AND active = true`).Scan(&activeAdmins); err != nil {
+			return fmt.Errorf("count admins: %w", err)
+		}
+		if activeAdmins <= 1 {
+			return fmt.Errorf("delete user: %w", domain.ErrLastAdmin)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("delete user exec: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete user: %w", err)
+	}
+	return nil
+}
+
 // isUniqueViolation checks if err is a Postgres unique_violation (SQLSTATE 23505).
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError

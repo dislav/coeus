@@ -57,6 +57,7 @@ type UserRepo interface {
 	FindByID(ctx context.Context, id string) (*User, error)
 	List(ctx context.Context, filter UserFilter, limit, offset int) ([]*User, error)
 	Update(ctx context.Context, id string, upd UserUpdate, callerID string) (*User, error)
+	Delete(ctx context.Context, id, callerID string) error
 }
 
 // SessionRepo manages session records.

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/vlgrigoriev/coeus/internal/auth"
+	"github.com/vlgrigoriev/coeus/internal/config"
 	"github.com/vlgrigoriev/coeus/internal/domain"
 	"github.com/vlgrigoriev/coeus/internal/storage"
 )
@@ -168,6 +169,84 @@ func TestTokenValid(t *testing.T) {
 				t.Errorf("tokenValid = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAuthMiddleware_RejectsStaleActive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
+	tok, _ := mgr.Issue("u1", "user", true, 3)
+	repo := &fakeUserRepo{user: &storage.User{ID: "u1", Active: false, TokenVersion: 3}}
+	r := gin.New()
+	r.GET("/p", AuthMiddleware(mgr, repo), func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/p", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", w.Code)
+	}
+}
+
+func TestAuthMiddleware_RejectsStaleTokenVersion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
+	tok, _ := mgr.Issue("u1", "user", true, 3)
+	repo := &fakeUserRepo{user: &storage.User{ID: "u1", Active: true, TokenVersion: 4}}
+	r := gin.New()
+	r.GET("/p", AuthMiddleware(mgr, repo), func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/p", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", w.Code)
+	}
+}
+
+func TestAuthMiddleware_RejectsFindByIDError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
+	tok, _ := mgr.Issue("u1", "user", true, 3)
+	repo := &fakeUserRepo{err: domain.ErrNotFound}
+	r := gin.New()
+	r.GET("/p", AuthMiddleware(mgr, repo), func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/p", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", w.Code)
+	}
+}
+
+func TestAuthMiddleware_HappyPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
+	tok, _ := mgr.Issue("u1", "user", true, 3)
+	repo := &fakeUserRepo{user: &storage.User{ID: "u1", Active: true, TokenVersion: 3}}
+	r := gin.New()
+	var gotUser interface{}
+	r.GET("/p", AuthMiddleware(mgr, repo), func(c *gin.Context) {
+		gotUser, _ = c.Get("user")
+		c.JSON(200, gin.H{"ok": true})
+	})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/p", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", w.Code)
+	}
+	if gotUser == nil {
+		t.Fatal("'user' not set in gin context")
+	}
+	u, ok := gotUser.(*storage.User)
+	if !ok {
+		t.Fatal("'user' is not *storage.User")
+	}
+	if u.ID != "u1" {
+		t.Errorf("user.ID = %q, want u1", u.ID)
 	}
 }
 

@@ -88,6 +88,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	if !user.Active {
+		c.JSON(http.StatusUnauthorized, errorResponse(domain.ErrUnauthorized))
+		return
+	}
+
 	token, err := h.jwtMgr.Issue(user.ID, user.Role, user.Active, user.TokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errorResponse(err))

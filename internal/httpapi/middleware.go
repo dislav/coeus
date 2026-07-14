@@ -49,8 +49,13 @@ func AuthMiddleware(jwtMgr *auth.JWTManager, users storage.UserRepo) gin.Handler
 
 // tokenValid reports whether the JWT claims still match the live user row.
 // Pure (no DB) so it is unit-testable in isolation.
+// The leading user.Active check makes deactivation actually suspend the
+// account: without it, a freshly-issued token for a deactivated user
+// (active=false) would match the live row and pass.
 func tokenValid(claims *auth.Claims, user *storage.User) bool {
-	return claims.Active == user.Active && claims.TokenVersion == user.TokenVersion
+	return user.Active &&
+		claims.Active == user.Active &&
+		claims.TokenVersion == user.TokenVersion
 }
 
 func RoleGuard(allowedRoles ...string) gin.HandlerFunc {

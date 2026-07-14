@@ -170,6 +170,7 @@ func TestTokenValid(t *testing.T) {
 		{"active mismatch", true, 3, false, 3, false},
 		{"version mismatch", true, 3, true, 4, false},
 		{"both mismatch", false, 0, true, 1, false},
+		{"deactivated match bypass", false, 0, false, 0, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

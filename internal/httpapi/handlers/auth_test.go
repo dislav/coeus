@@ -144,3 +144,31 @@ func TestLoginHandler_WrongPassword(t *testing.T) {
 		t.Errorf("status = %d, want 401", w.Code)
 	}
 }
+
+func TestLoginHandler_DeactivatedAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, repo := newTestAuthHandler()
+
+	// Insert a deactivated user directly into the mock (Create always sets Active: true).
+	hash, err := auth.HashPassword("secret123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.users["deactivated@test.com"] = &storage.User{
+		ID:           uuid.NewString(),
+		Email:        "deactivated@test.com",
+		PasswordHash: hash,
+		Role:         "user",
+		Active:       false,
+	}
+
+	r := gin.New()
+	r.POST("/auth/login", h.Login)
+
+	body, _ := json.Marshal(map[string]string{"email": "deactivated@test.com", "password": "secret123"})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/auth/login", bytes.NewReader(body)))
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}

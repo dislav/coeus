@@ -158,3 +158,124 @@ func TestUserRepo_NewColumnsPopulated(t *testing.T) {
 		t.Errorf("by id: Active=%v TokenVersion=%d", byID.Active, byID.TokenVersion)
 	}
 }
+
+func TestUserRepo_Update_HappyPath(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	target, _ := repo.Create(ctx, "up@example.com", "h", "user")
+	// Another admin performs the update.
+	caller, _ := repo.Create(ctx, "caller@example.com", "h", "admin")
+
+	updated, err := repo.Update(ctx, target.ID, storage.UserUpdate{
+		Email: "changed@example.com", Role: "expert", Active: true,
+	}, caller.ID)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.Email != "changed@example.com" || updated.Role != "expert" {
+		t.Errorf("updated = %+v", updated)
+	}
+	// role changed user->expert => token_version bumped from 0 to 1.
+	if updated.TokenVersion != 1 {
+		t.Errorf("TokenVersion = %d, want 1 (role changed)", updated.TokenVersion)
+	}
+}
+
+func TestUserRepo_Update_NoBumpOnSameRoleActive(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	target, _ := repo.Create(ctx, "nb@example.com", "h", "expert")
+	// First bump it to 1 via a role change.
+	repo.Update(ctx, target.ID, storage.UserUpdate{Email: "nb@example.com", Role: "user", Active: true}, "someone-else")
+	// Now send the SAME role/active back (only email differs) => no bump.
+	updated, err := repo.Update(ctx, target.ID, storage.UserUpdate{Email: "nb2@example.com", Role: "user", Active: true}, "someone-else")
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.TokenVersion != 1 {
+		t.Errorf("TokenVersion = %d, want 1 (no bump on pure email change)", updated.TokenVersion)
+	}
+	if updated.Email != "nb2@example.com" {
+		t.Errorf("email not updated: %q", updated.Email)
+	}
+}
+
+func TestUserRepo_Update_SelfForbidden(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	self, _ := repo.Create(ctx, "self@example.com", "h", "admin")
+	_, err := repo.Update(ctx, self.ID, storage.UserUpdate{
+		Email: "self@example.com", Role: "user", Active: true,
+	}, self.ID)
+	if !errors.Is(err, domain.ErrSelfForbidden) {
+		t.Errorf("err = %v, want ErrSelfForbidden", err)
+	}
+}
+
+func TestUserRepo_Update_SelfEmailAllowed(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	self, _ := repo.Create(ctx, "selfmail@example.com", "h", "admin")
+	// Editing own email only (role/active unchanged) is allowed.
+	updated, err := repo.Update(ctx, self.ID, storage.UserUpdate{
+		Email: "selfmail2@example.com", Role: "admin", Active: true,
+	}, self.ID)
+	if err != nil {
+		t.Fatalf("self email edit should be allowed: %v", err)
+	}
+	if updated.TokenVersion != 0 {
+		t.Errorf("TokenVersion = %d, want 0 (no bump)", updated.TokenVersion)
+	}
+}
+
+func TestUserRepo_Update_LastAdmin(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	only, _ := repo.Create(ctx, "only-admin@example.com", "h", "admin")
+	caller, _ := repo.Create(ctx, "caller2@example.com", "h", "user") // non-admin caller: exactly one admin exists
+	_, err := repo.Update(ctx, only.ID, storage.UserUpdate{
+		Email: "only-admin@example.com", Role: "user", Active: true,
+	}, caller.ID)
+	if !errors.Is(err, domain.ErrLastAdmin) {
+		t.Errorf("err = %v, want ErrLastAdmin", err)
+	}
+}
+
+func TestUserRepo_Update_DuplicateEmail(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	repo.Create(ctx, "taken@example.com", "h", "user")
+	target, _ := repo.Create(ctx, "orig@example.com", "h", "user")
+	caller, _ := repo.Create(ctx, "caller3@example.com", "h", "admin")
+	_, err := repo.Update(ctx, target.ID, storage.UserUpdate{
+		Email: "taken@example.com", Role: "user", Active: true,
+	}, caller.ID)
+	if !errors.Is(err, domain.ErrDuplicate) {
+		t.Errorf("err = %v, want ErrDuplicate", err)
+	}
+}
+
+func TestUserRepo_Update_NotFound(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	_, err := repo.Update(ctx, "00000000-0000-0000-0000-000000000000", storage.UserUpdate{
+		Email: "x@example.com", Role: "user", Active: true,
+	}, "caller")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}

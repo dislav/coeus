@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/vlgrigoriev/coeus/internal/domain"
+	"github.com/vlgrigoriev/coeus/internal/storage"
 )
 
 func TestUserRepo_CreateAndFindByEmail(t *testing.T) {
@@ -71,6 +72,57 @@ func TestUserRepo_FindByID(t *testing.T) {
 	}
 	if found.Role != "expert" {
 		t.Errorf("role = %q", found.Role)
+	}
+}
+
+func strPtr(s string) *string { return &s }
+func boolPtr(b bool) *bool    { return &b }
+
+func TestUserRepo_List(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := NewUserRepo(pool)
+	ctx := context.Background()
+
+	repo.Create(ctx, "a@example.com", "h", "user")
+	repo.Create(ctx, "b@example.com", "h", "expert")
+	repo.Create(ctx, "c@example.com", "h", "admin")
+	repo.Create(ctx, "admin2@example.com", "h", "admin")
+
+	// All, ordered by created_at DESC.
+	all, err := repo.List(ctx, storage.UserFilter{}, 100, 0)
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("len(all) = %d, want 4", len(all))
+	}
+
+	// Filter by role.
+	admins, _ := repo.List(ctx, storage.UserFilter{Role: strPtr("admin")}, 100, 0)
+	if len(admins) != 2 {
+		t.Errorf("admins = %d, want 2", len(admins))
+	}
+
+	// Filter by active.
+	inactive, _ := repo.List(ctx, storage.UserFilter{Active: boolPtr(false)}, 100, 0)
+	if len(inactive) != 0 {
+		t.Errorf("inactive = %d, want 0", len(inactive))
+	}
+
+	// Query substring (ILIKE).
+	got, _ := repo.List(ctx, storage.UserFilter{Query: strPtr("ADMIN2")}, 100, 0)
+	if len(got) != 1 || got[0].Email != "admin2@example.com" {
+		t.Errorf("query ADMIN2: got %+v", got)
+	}
+
+	// Pagination.
+	page1, _ := repo.List(ctx, storage.UserFilter{}, 2, 0)
+	page2, _ := repo.List(ctx, storage.UserFilter{}, 2, 2)
+	if len(page1) != 2 || len(page2) != 2 {
+		t.Errorf("pagination: page1=%d page2=%d", len(page1), len(page2))
+	}
+	if page1[0].ID == page2[0].ID {
+		t.Error("pagination returned same row on both pages")
 	}
 }
 

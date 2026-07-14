@@ -45,6 +45,16 @@ func (m *mockUserRepo) FindByID(_ context.Context, id string) (*storage.User, er
 	}
 	return nil, fmt.Errorf("find: %w", domain.ErrNotFound)
 }
+func (m *mockUserRepo) List(context.Context, storage.UserFilter, int, int) ([]*storage.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) Update(context.Context, string, storage.UserUpdate, string) (*storage.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) Delete(context.Context, string, string) error { return nil }
+func (m *mockUserRepo) ResetPassword(context.Context, string) (string, error) {
+	return "stub", nil
+}
 
 func newTestAuthHandler() (*AuthHandler, *mockUserRepo) {
 	repo := &mockUserRepo{users: make(map[string]*storage.User)}

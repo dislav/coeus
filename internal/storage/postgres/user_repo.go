@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -75,6 +76,55 @@ func (r *UserRepo) FindByID(ctx context.Context, id string) (*storage.User, erro
 		return nil, fmt.Errorf("find user by id: %w", err)
 	}
 	return &u, nil
+}
+
+func (r *UserRepo) List(ctx context.Context, filter storage.UserFilter, limit, offset int) ([]*storage.User, error) {
+	query := `
+		SELECT id, email, password_hash, role, active, token_version,
+		       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		FROM users`
+	args := []interface{}{}
+	idx := 1
+	var where []string
+	if filter.Role != nil {
+		where = append(where, fmt.Sprintf("role = $%d", idx))
+		args = append(args, *filter.Role)
+		idx++
+	}
+	if filter.Active != nil {
+		where = append(where, fmt.Sprintf("active = $%d", idx))
+		args = append(args, *filter.Active)
+		idx++
+	}
+	if filter.Query != nil && *filter.Query != "" {
+		where = append(where, fmt.Sprintf("email ILIKE $%d", idx))
+		args = append(args, "%"+escapeLike(*filter.Query)+"%")
+		idx++
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
+	args = append(args, limit, offset)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*storage.User
+	for rows.Next() {
+		var u storage.User
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Active, &u.TokenVersion, &u.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		results = append(results, &u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	return results, nil
 }
 
 // isUniqueViolation checks if err is a Postgres unique_violation (SQLSTATE 23505).

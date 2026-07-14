@@ -146,6 +146,16 @@ func (f *fakeUserRepo) FindByEmail(context.Context, string) (*storage.User, erro
 func (f *fakeUserRepo) FindByID(_ context.Context, _ string) (*storage.User, error) {
 	return f.user, f.err
 }
+func (f *fakeUserRepo) List(context.Context, storage.UserFilter, int, int) ([]*storage.User, error) {
+	return nil, nil
+}
+func (f *fakeUserRepo) Update(context.Context, string, storage.UserUpdate, string) (*storage.User, error) {
+	return nil, nil
+}
+func (f *fakeUserRepo) Delete(context.Context, string, string) error { return nil }
+func (f *fakeUserRepo) ResetPassword(context.Context, string) (string, error) {
+	return "stub", nil
+}
 
 func TestTokenValid(t *testing.T) {
 	cases := []struct {

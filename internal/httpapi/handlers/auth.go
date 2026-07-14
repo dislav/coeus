@@ -109,3 +109,14 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	c.JSON(http.StatusOK, authResponse{Token: token, Role: user.Role})
 }
+
+// Profile — GET /api/v1/profile. Reads the *storage.User stashed by AuthMiddleware.
+func (h *AuthHandler) Profile(c *gin.Context) {
+	v, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusNotFound, errorResponse(domain.ErrNotFound))
+		return
+	}
+	user := v.(*storage.User)
+	c.JSON(http.StatusOK, userToResponse(user))
+}

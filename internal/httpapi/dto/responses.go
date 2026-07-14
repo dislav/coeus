@@ -43,3 +43,26 @@ type ImageResponse struct {
 type ImageListResponse struct {
 	Data []ImageResponse `json:"data"`
 }
+
+// UserResponse is the shared user shape returned by /profile and /users endpoints.
+// It NEVER exposes password_hash or token_version (spec §Shared UserResponse).
+type UserResponse struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	Active    bool   `json:"active"`
+	CreatedAt string `json:"created_at"`
+}
+
+// UserListResponse wraps a paginated user list (no total field — matches
+// QuestionListResponse / SessionListResponse precedent).
+type UserListResponse struct {
+	Data    []UserResponse `json:"data"`
+	Page    int            `json:"page"`
+	PerPage int            `json:"per_page"`
+}
+
+// ResetPasswordResponse returns the generated plaintext exactly once.
+type ResetPasswordResponse struct {
+	Password string `json:"password"`
+}

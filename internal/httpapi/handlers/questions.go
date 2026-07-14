@@ -262,6 +262,21 @@ func answersSubsetOfChoices(answers, choices []string) bool {
 	return true
 }
 
+// Delete — DELETE /api/v1/questions/:id (expert, admin).
+func (h *QuestionHandler) Delete(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.questions.Delete(c.Request.Context(), id); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			c.JSON(http.StatusNotFound, errorResponse(domain.ErrNotFound))
+			return
+		}
+		// question_in_use (and any other domain error) maps via HTTPStatus.
+		c.JSON(domain.HTTPStatus(err), errorResponse(err))
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // Create — POST /api/v1/questions. Expert only (RoleGuard enforces 403 at the route).
 // Hand-authors a canonical verified question, bypassing the image pipeline (spec §3.2).
 func (h *QuestionHandler) Create(c *gin.Context) {

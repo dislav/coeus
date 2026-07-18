@@ -16,9 +16,17 @@ import (
 
 const (
 	roleExpert     = "expert"
+	roleAdmin      = "admin"
 	defaultPerPage = 20
 	maxPerPage     = 100
 )
+
+// isExpert reports whether the role carries expert (moderation) privileges.
+// admin is a superuser: it has every expert power plus user management, so it
+// must take the expert branch everywhere the handlers split on role.
+func isExpert(role string) bool {
+	return role == roleExpert || role == roleAdmin
+}
 
 // QuestionHandler serves the role-split /api/v1/questions endpoints (spec §4.4).
 type QuestionHandler struct {
@@ -71,12 +79,12 @@ func (h *QuestionHandler) List(c *gin.Context) {
 			return
 		}
 		// Ownership: user must own the session (403 on mismatch); expert exempt.
-		if role != roleExpert && sess.UserID != userID {
+		if !isExpert(role) && sess.UserID != userID {
 			c.JSON(http.StatusForbidden, errorResponse(domain.ErrForbidden))
 			return
 		}
 		// Expiry gate applies to the user role only (experts may inspect any session).
-		if role != roleExpert {
+		if !isExpert(role) {
 			if sess.Status != domain.SessionStatusOpen {
 				c.JSON(http.StatusGone, errorResponse(domain.ErrSessionExpired))
 				return
@@ -95,7 +103,7 @@ func (h *QuestionHandler) List(c *gin.Context) {
 		}
 		data := make([]any, 0, len(items))
 		for _, q := range items {
-			if role == roleExpert {
+			if isExpert(role) {
 				data = append(data, toExpertResponseFromSession(q))
 			} else {
 				data = append(data, toUserResponse(q))
@@ -106,7 +114,7 @@ func (h *QuestionHandler) List(c *gin.Context) {
 	}
 
 	// No session_id: experts get the global queue; users are forbidden (403).
-	if role != roleExpert {
+	if !isExpert(role) {
 		c.JSON(http.StatusForbidden, errorResponse(domain.ErrForbidden))
 		return
 	}
@@ -128,7 +136,7 @@ func (h *QuestionHandler) Get(c *gin.Context) {
 	id := c.Param("id")
 	role := c.GetString("role")
 
-	if role == roleExpert {
+	if isExpert(role) {
 		ev, err := h.questions.FindExpertByID(c.Request.Context(), id)
 		if err != nil {
 			if errors.Is(err, domain.ErrNotFound) {

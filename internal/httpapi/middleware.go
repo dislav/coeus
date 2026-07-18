@@ -52,8 +52,12 @@ func AuthMiddleware(jwtMgr *auth.JWTManager, users storage.UserRepo) gin.Handler
 // The leading user.Active check makes deactivation actually suspend the
 // account: without it, a freshly-issued token for a deactivated user
 // (active=false) would match the live row and pass.
+// Role is compared too: a role change that didn't bump token_version (e.g. an
+// out-of-band UPDATE) would otherwise leave a stale role claim passing here and
+// surfacing later as a misleading 403 — or, on demotion, granting stale access.
 func tokenValid(claims *auth.Claims, user *storage.User) bool {
 	return user.Active &&
+		claims.Role == user.Role &&
 		claims.Active == user.Active &&
 		claims.TokenVersion == user.TokenVersion
 }

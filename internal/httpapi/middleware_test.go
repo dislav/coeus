@@ -160,22 +160,25 @@ func (f *fakeUserRepo) ResetPassword(context.Context, string) (string, error) {
 func TestTokenValid(t *testing.T) {
 	cases := []struct {
 		name          string
+		claimsRole    string
 		claimsActive  bool
 		claimsVersion int64
+		userRole      string
 		userActive    bool
 		userVersion   int64
 		want          bool
 	}{
-		{"match", true, 3, true, 3, true},
-		{"active mismatch", true, 3, false, 3, false},
-		{"version mismatch", true, 3, true, 4, false},
-		{"both mismatch", false, 0, true, 1, false},
-		{"deactivated match bypass", false, 0, false, 0, false},
+		{"match", "user", true, 3, "user", true, 3, true},
+		{"active mismatch", "user", true, 3, "user", false, 3, false},
+		{"version mismatch", "user", true, 3, "user", true, 4, false},
+		{"both mismatch", "user", false, 0, "user", true, 1, false},
+		{"deactivated match bypass", "user", false, 0, "user", false, 0, false},
+		{"role mismatch", "user", true, 3, "admin", true, 3, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			claims := &auth.Claims{Active: tc.claimsActive, TokenVersion: tc.claimsVersion}
-			user := &storage.User{Active: tc.userActive, TokenVersion: tc.userVersion}
+			claims := &auth.Claims{Role: tc.claimsRole, Active: tc.claimsActive, TokenVersion: tc.claimsVersion}
+			user := &storage.User{Role: tc.userRole, Active: tc.userActive, TokenVersion: tc.userVersion}
 			if got := tokenValid(claims, user); got != tc.want {
 				t.Errorf("tokenValid = %v, want %v", got, tc.want)
 			}
@@ -215,6 +218,25 @@ func TestAuthMiddleware_RejectsStaleTokenVersion(t *testing.T) {
 	}
 }
 
+func TestAuthMiddleware_RejectsStaleRole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
+	// Token carries role="user" (issued before an out-of-band promotion);
+	// the live row says "admin". active + token_version still match, so this
+	// is exactly the stale-role case that used to slip through to a 403.
+	tok, _ := mgr.Issue("u1", "user", true, 3)
+	repo := &fakeUserRepo{user: &storage.User{ID: "u1", Role: "admin", Active: true, TokenVersion: 3}}
+	r := gin.New()
+	r.GET("/p", AuthMiddleware(mgr, repo), func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/p", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", w.Code)
+	}
+}
+
 func TestAuthMiddleware_RejectsFindByIDError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
@@ -235,7 +257,7 @@ func TestAuthMiddleware_HappyPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
 	tok, _ := mgr.Issue("u1", "user", true, 3)
-	repo := &fakeUserRepo{user: &storage.User{ID: "u1", Active: true, TokenVersion: 3}}
+	repo := &fakeUserRepo{user: &storage.User{ID: "u1", Role: "user", Active: true, TokenVersion: 3}}
 	r := gin.New()
 	var gotUser interface{}
 	r.GET("/p", AuthMiddleware(mgr, repo), func(c *gin.Context) {

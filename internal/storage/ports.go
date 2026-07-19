@@ -84,6 +84,11 @@ type ImageRepo interface {
 // QuestionRepo manages the canonical question knowledge base.
 type QuestionRepo interface {
 	Create(ctx context.Context, q *domain.Question) (string, error)
+	// UpsertFromImport inserts q or, on question_hash conflict, replaces all
+	// content fields in place (the file wins). The question ID never changes;
+	// session/image linkage and image bytes are untouched. created is true on
+	// insert, false on update. Tags are fully replaced by q.Tags.
+	UpsertFromImport(ctx context.Context, q *domain.Question) (created bool, err error)
 	FindByID(ctx context.Context, id string) (*domain.Question, error)
 	FindExact(ctx context.Context, hash string) (*domain.Question, error)
 	FindSemantic(ctx context.Context, embedding []float32, threshold float64) (*domain.Question, error)

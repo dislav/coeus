@@ -91,6 +91,9 @@ func (f *fakeQuestionRepo) FindForUserByID(ctx context.Context, qid, uid string)
 	return f.forUserByID(qid, uid)
 }
 func (f *fakeQuestionRepo) Delete(context.Context, string) error { return nil }
+func (f *fakeQuestionRepo) UpsertFromImport(context.Context, *domain.Question) (bool, error) {
+	return false, nil
+}
 
 type fakeQuestionSessionRepo struct {
 	byID func(id string) (*domain.Session, error)

@@ -233,6 +233,9 @@ func (r *fakeQuestionRepo) LinkToSession(_ context.Context, sessionID, imageID, 
 }
 
 func (r *fakeQuestionRepo) Delete(_ context.Context, id string) error { return nil }
+func (r *fakeQuestionRepo) UpsertFromImport(context.Context, *domain.Question) (bool, error) {
+	return false, nil
+}
 
 type fakeJobQueue struct {
 	completed []string

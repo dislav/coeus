@@ -93,6 +93,10 @@ func (f *fakeEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 	return f.embedding, f.err
 }
 
+func (f *fakeEmbedder) EmbedBatch(_ context.Context, _ []string) ([][]float32, error) {
+	return nil, f.err
+}
+
 // --- Fake repos (full interface implementations) ---
 
 type fakeImageRepo struct {

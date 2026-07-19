@@ -72,3 +72,42 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float32, error) {
 	}
 	return out, nil
 }
+
+// EmbedBatch calls the embeddings endpoint once for many texts and returns one
+// vector per input, aligned by the response index field. On any failure
+// (transport, count mismatch, dimension mismatch, empty input) it returns
+// (nil, err) — the caller treats batch embedding as best-effort.
+func (e *Embedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, fmt.Errorf("embed batch: empty input")
+	}
+
+	params := openai.EmbeddingNewParams{
+		Model: openai.EmbeddingModel(e.model),
+		Input: StringsInput(texts).FromStrings(),
+	}
+
+	resp, err := e.client.Embeddings.New(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("embed batch: %w", err)
+	}
+	if len(resp.Data) != len(texts) {
+		return nil, fmt.Errorf("embed batch: got %d embeddings for %d inputs", len(resp.Data), len(texts))
+	}
+
+	out := make([][]float32, len(texts))
+	for _, d := range resp.Data {
+		if d.Index < 0 || d.Index >= int64(len(texts)) {
+			return nil, fmt.Errorf("embed batch: response index %d out of range", d.Index)
+		}
+		vec := make([]float32, len(d.Embedding))
+		for i, v := range d.Embedding {
+			vec[i] = float32(v)
+		}
+		if e.dim > 0 && len(vec) != e.dim {
+			return nil, fmt.Errorf("embed batch: dimension mismatch: got %d, want %d", len(vec), e.dim)
+		}
+		out[d.Index] = vec
+	}
+	return out, nil
+}

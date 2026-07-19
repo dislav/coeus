@@ -119,6 +119,10 @@ func (f *fakeEmbedder) Embed(ctx context.Context, text string) ([]float32, error
 	return []float32{0.1, 0.2, 0.3}, nil
 }
 
+func (f *fakeEmbedder) EmbedBatch(context.Context, []string) ([][]float32, error) {
+	return nil, nil
+}
+
 // --- helpers ---
 
 func newQuestionRouter(role, userID string, q storage.QuestionRepo, s storage.SessionRepo) *gin.Engine {

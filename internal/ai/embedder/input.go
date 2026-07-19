@@ -25,3 +25,17 @@ func (s StringInput) FromString() openai.EmbeddingNewParamsInputUnion {
 		OfString: openai.String(s.Text),
 	}
 }
+
+// StringsInput adapts a []string into the openai-go embedding input union.
+// Same union-reconciliation caveat as StringInput: the concrete field
+// (OfArrayOfStrings) matches the pinned SDK version; update only here if
+// the generated union changes.
+type StringsInput []string
+
+// FromStrings sets the union to the given string array. The wire requirement
+// is {"model":"<model>","input":["<text>","<text>",...]}.
+func (s StringsInput) FromStrings() openai.EmbeddingNewParamsInputUnion {
+	return openai.EmbeddingNewParamsInputUnion{
+		OfArrayOfStrings: s,
+	}
+}

@@ -30,6 +30,9 @@ type AIVerifier interface {
 // AIEmbedder produces a vector embedding of question text for semantic dedup.
 type AIEmbedder interface {
 	Embed(ctx context.Context, text string) ([]float32, error)
+	// EmbedBatch embeds many texts in one API call. Results are aligned to
+	// inputs by index and dim-checked exactly like Embed.
+	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
 }
 
 // Answer is a single choice or correct answer extracted from the image.

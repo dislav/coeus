@@ -124,5 +124,85 @@ func TestEmbedder_EmptyText(t *testing.T) {
 	}
 }
 
+// --- EmbedBatch tests ---
+
+const batchEmbeddingsBody = `{"object":"list","data":[` +
+	`{"object":"embedding","index":1,"embedding":[0.3,0.4]},` +
+	`{"object":"embedding","index":0,"embedding":[0.1,0.2]}],` +
+	`"model":"text-embedding-3-small","usage":{"prompt_tokens":4,"total_tokens":4}}`
+
+func TestEmbedder_EmbedBatchHappyPath(t *testing.T) {
+	// Server returns data out of order; alignment must follow the index field.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Input []string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if len(req.Input) != 2 {
+			t.Errorf("input len = %d, want 2 (array input)", len(req.Input))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(batchEmbeddingsBody))
+	}))
+	defer srv.Close()
+
+	cfg := testCfg(srv.URL)
+	cfg.Dim = 2
+	e := New(cfg, quietLogger())
+	out, err := e.EmbedBatch(context.Background(), []string{"a", "b"})
+	if err != nil {
+		t.Fatalf("EmbedBatch: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("len(out) = %d, want 2", len(out))
+	}
+	if out[0][0] != float32(0.1) || out[0][1] != float32(0.2) {
+		t.Errorf("out[0] = %v, want [0.1 0.2] (index-aligned)", out[0])
+	}
+	if out[1][0] != float32(0.3) || out[1][1] != float32(0.4) {
+		t.Errorf("out[1] = %v, want [0.3 0.4] (index-aligned)", out[1])
+	}
+}
+
+func TestEmbedder_EmbedBatchTransportError(t *testing.T) {
+	srv := embeddingsServer(t, 0, http.StatusInternalServerError, `{"error":"down"}`)
+	defer srv.Close()
+
+	e := New(testCfg(srv.URL), quietLogger())
+	_, err := e.EmbedBatch(context.Background(), []string{"a", "b"})
+	if err == nil {
+		t.Fatal("expected error on HTTP 500, got nil")
+	}
+}
+
+func TestEmbedder_EmbedBatchDimensionMismatch(t *testing.T) {
+	// Server returns 10-dim vectors but cfg.Dim is 1536.
+	srv := embeddingsServer(t, 10, http.StatusOK, happyEmbeddingsBody)
+	defer srv.Close()
+
+	e := New(testCfg(srv.URL), quietLogger())
+	_, err := e.EmbedBatch(context.Background(), []string{"a"})
+	if err == nil {
+		t.Fatal("expected error on dim mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "dimension") {
+		t.Errorf("error = %q, expected to mention dimension", err.Error())
+	}
+}
+
+func TestEmbedder_EmbedBatchEmptyInput(t *testing.T) {
+	srv := embeddingsServer(t, 1536, http.StatusOK, happyEmbeddingsBody)
+	defer srv.Close()
+
+	e := New(testCfg(srv.URL), quietLogger())
+	// The guard rejects empty input before any network call.
+	_, err := e.EmbedBatch(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error on empty input, got nil")
+	}
+}
+
 // Quiet the unused-import linter when json is only used in package-level fixtures.
 var _ = json.RawMessage(nil)

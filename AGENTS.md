@@ -79,9 +79,10 @@ not the upload handler.
 
 ## Repo gotchas
 
-- **`*.md` and `docs/` are gitignored.** New markdown (this file included) won't
-  appear in `git status`; use `git add -f` to track it. This is intentional for
-  planning/scratch docs.
+- **Markdown and `docs/` are tracked normally.** Specs, plans, and integration
+  guides under `docs/` (including `docs/superpowers/`) are committed to the
+  repo — add them with plain `git add`. Keep secrets and scratch notes out of
+  `docs/` by discipline, not by ignore rules.
 - Real secrets live in the gitignored `.env` — never paste its contents into output.
 
 ## context-mode — MANDATORY routing rules

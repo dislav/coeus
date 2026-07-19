@@ -90,6 +90,7 @@ func (f *fakeQuestionRepo) FindExpertByID(ctx context.Context, id string) (*stor
 func (f *fakeQuestionRepo) FindForUserByID(ctx context.Context, qid, uid string) (*storage.QuestionWithSession, error) {
 	return f.forUserByID(qid, uid)
 }
+func (f *fakeQuestionRepo) Delete(context.Context, string) error { return nil }
 
 type fakeQuestionSessionRepo struct {
 	byID func(id string) (*domain.Session, error)
@@ -254,6 +255,56 @@ func TestGet_UserNotOwner404(t *testing.T) {
 	w := doReq(t, r, "GET", "/api/v1/questions/q1", "")
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d want 404", w.Code)
+	}
+}
+
+// Admin is a superuser (admin ⊇ expert): it must get expert behavior on the
+// role-split List/Get endpoints, not fall into the user branch.
+
+func TestList_AdminGlobalQueue200(t *testing.T) {
+	q := &fakeQuestionRepo{
+		listModeration: func(status, tag string, limit, off int) ([]*storage.QuestionExpertView, error) {
+			return []*storage.QuestionExpertView{{Question: &domain.Question{ID: "q1"}, ImageID: "img1"}}, nil
+		},
+	}
+	r := newQuestionRouter("admin", "a1", q, &fakeQuestionSessionRepo{})
+	w := doReq(t, r, "GET", "/api/v1/questions", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin global queue: got %d want 200: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestList_AdminSessionScopedExemptOwnershipAndExpiry(t *testing.T) {
+	q := &fakeQuestionRepo{
+		listForSession: func(sessionID, status string, l, o int) ([]*storage.QuestionWithSession, error) {
+			return nil, nil
+		},
+	}
+	// Session owned by someone else AND expired: a plain user would 403/410,
+	// but admin (like expert) is exempt from both gates.
+	s := &fakeQuestionSessionRepo{byID: func(string) (*domain.Session, error) {
+		return &domain.Session{UserID: "other", Status: "open", ExpiresAt: "2000-01-01T00:00:00Z"}, nil
+	}}
+	r := newQuestionRouter("admin", "a1", q, s)
+	w := doReq(t, r, "GET", "/api/v1/questions?session_id=s1", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin session-scoped: got %d want 200: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGet_AdminUsesExpertPath(t *testing.T) {
+	q := &fakeQuestionRepo{
+		expertByID: func(string) (*storage.QuestionExpertView, error) {
+			return &storage.QuestionExpertView{Question: &domain.Question{ID: "q1"}, ImageID: "img1"}, nil
+		},
+		forUserByID: func(string, string) (*storage.QuestionWithSession, error) {
+			return nil, domain.ErrNotFound // user path would 404 for admin
+		},
+	}
+	r := newQuestionRouter("admin", "a1", q, &fakeQuestionSessionRepo{})
+	w := doReq(t, r, "GET", "/api/v1/questions/q1", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin get: got %d want 200: %s", w.Code, w.Body.String())
 	}
 }
 

@@ -13,6 +13,8 @@ type User struct {
 	Email        string
 	PasswordHash string
 	Role         string
+	Active       bool
+	TokenVersion int64
 	CreatedAt    string
 }
 
@@ -34,11 +36,29 @@ type QuestionExpertView struct {
 	HasVerificationReport bool
 }
 
+// UserFilter holds the optional List filters. Each pointer is optional (nil => no filter).
+type UserFilter struct {
+	Role   *string
+	Active *bool
+	Query  *string
+}
+
+// UserUpdate is the full-replacement payload for PUT /users/:id (non-pointer fields).
+type UserUpdate struct {
+	Email  string
+	Role   string
+	Active bool
+}
+
 // UserRepo manages user records.
 type UserRepo interface {
 	Create(ctx context.Context, email, passwordHash, role string) (*User, error)
 	FindByEmail(ctx context.Context, email string) (*User, error)
 	FindByID(ctx context.Context, id string) (*User, error)
+	List(ctx context.Context, filter UserFilter, limit, offset int) ([]*User, error)
+	Update(ctx context.Context, id string, upd UserUpdate, callerID string) (*User, error)
+	Delete(ctx context.Context, id, callerID string) error
+	ResetPassword(ctx context.Context, id string) (string, error)
 }
 
 // SessionRepo manages session records.
@@ -79,6 +99,7 @@ type QuestionRepo interface {
 	FindForUserByID(ctx context.Context, questionID, userID string) (*QuestionWithSession, error)
 	CountUnresolvedForImage(ctx context.Context, imageID string) (int, error)
 	LinkToSession(ctx context.Context, sessionID, imageID, questionID string, number int, confidence float64) error
+	Delete(ctx context.Context, id string) error
 }
 
 // JobQueue manages the Postgres-backed job queue.

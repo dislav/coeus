@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/vlgrigoriev/coeus/internal/auth"
+	"github.com/vlgrigoriev/coeus/internal/config"
 	"github.com/vlgrigoriev/coeus/internal/domain"
+	"github.com/vlgrigoriev/coeus/internal/storage"
 )
 
 // fakeSessionRepo implements just enough for middleware tests.
@@ -125,5 +128,193 @@ func TestSessionWindow_WrongOwnership(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest("POST", "/sessions/sess-1/images", nil))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 (don't leak existence)", w.Code)
+	}
+}
+
+// fakeUserRepo implements just storage.UserRepo for middleware tests.
+type fakeUserRepo struct {
+	user *storage.User
+	err  error
+}
+
+func (f *fakeUserRepo) Create(context.Context, string, string, string) (*storage.User, error) {
+	return nil, nil
+}
+func (f *fakeUserRepo) FindByEmail(context.Context, string) (*storage.User, error) {
+	return nil, nil
+}
+func (f *fakeUserRepo) FindByID(_ context.Context, _ string) (*storage.User, error) {
+	return f.user, f.err
+}
+func (f *fakeUserRepo) List(context.Context, storage.UserFilter, int, int) ([]*storage.User, error) {
+	return nil, nil
+}
+func (f *fakeUserRepo) Update(context.Context, string, storage.UserUpdate, string) (*storage.User, error) {
+	return nil, nil
+}
+func (f *fakeUserRepo) Delete(context.Context, string, string) error { return nil }
+func (f *fakeUserRepo) ResetPassword(context.Context, string) (string, error) {
+	return "stub", nil
+}
+
+func TestTokenValid(t *testing.T) {
+	cases := []struct {
+		name          string
+		claimsRole    string
+		claimsActive  bool
+		claimsVersion int64
+		userRole      string
+		userActive    bool
+		userVersion   int64
+		want          bool
+	}{
+		{"match", "user", true, 3, "user", true, 3, true},
+		{"active mismatch", "user", true, 3, "user", false, 3, false},
+		{"version mismatch", "user", true, 3, "user", true, 4, false},
+		{"both mismatch", "user", false, 0, "user", true, 1, false},
+		{"deactivated match bypass", "user", false, 0, "user", false, 0, false},
+		{"role mismatch", "user", true, 3, "admin", true, 3, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			claims := &auth.Claims{Role: tc.claimsRole, Active: tc.claimsActive, TokenVersion: tc.claimsVersion}
+			user := &storage.User{Role: tc.userRole, Active: tc.userActive, TokenVersion: tc.userVersion}
+			if got := tokenValid(claims, user); got != tc.want {
+				t.Errorf("tokenValid = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAuthMiddleware_RejectsStaleActive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
+	tok, _ := mgr.Issue("u1", "user", true, 3)
+	repo := &fakeUserRepo{user: &storage.User{ID: "u1", Active: false, TokenVersion: 3}}
+	r := gin.New()
+	r.GET("/p", AuthMiddleware(mgr, repo), func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/p", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", w.Code)
+	}
+}
+
+func TestAuthMiddleware_RejectsStaleTokenVersion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
+	tok, _ := mgr.Issue("u1", "user", true, 3)
+	repo := &fakeUserRepo{user: &storage.User{ID: "u1", Active: true, TokenVersion: 4}}
+	r := gin.New()
+	r.GET("/p", AuthMiddleware(mgr, repo), func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/p", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", w.Code)
+	}
+}
+
+func TestAuthMiddleware_RejectsStaleRole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
+	// Token carries role="user" (issued before an out-of-band promotion);
+	// the live row says "admin". active + token_version still match, so this
+	// is exactly the stale-role case that used to slip through to a 403.
+	tok, _ := mgr.Issue("u1", "user", true, 3)
+	repo := &fakeUserRepo{user: &storage.User{ID: "u1", Role: "admin", Active: true, TokenVersion: 3}}
+	r := gin.New()
+	r.GET("/p", AuthMiddleware(mgr, repo), func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/p", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", w.Code)
+	}
+}
+
+func TestAuthMiddleware_RejectsFindByIDError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
+	tok, _ := mgr.Issue("u1", "user", true, 3)
+	repo := &fakeUserRepo{err: domain.ErrNotFound}
+	r := gin.New()
+	r.GET("/p", AuthMiddleware(mgr, repo), func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/p", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", w.Code)
+	}
+}
+
+func TestAuthMiddleware_HappyPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mgr := auth.NewJWTManager(config.JWTConfig{Secret: "s", AccessTTL: time.Hour})
+	tok, _ := mgr.Issue("u1", "user", true, 3)
+	repo := &fakeUserRepo{user: &storage.User{ID: "u1", Role: "user", Active: true, TokenVersion: 3}}
+	r := gin.New()
+	var gotUser interface{}
+	r.GET("/p", AuthMiddleware(mgr, repo), func(c *gin.Context) {
+		gotUser, _ = c.Get("user")
+		c.JSON(200, gin.H{"ok": true})
+	})
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/p", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", w.Code)
+	}
+	if gotUser == nil {
+		t.Fatal("'user' not set in gin context")
+	}
+	u, ok := gotUser.(*storage.User)
+	if !ok {
+		t.Fatal("'user' is not *storage.User")
+	}
+	if u.ID != "u1" {
+		t.Errorf("user.ID = %q, want u1", u.ID)
+	}
+}
+
+func TestRoleGuard_Variadic(t *testing.T) {
+	mk := func(role string, guard ...string) int {
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.Use(func(c *gin.Context) { c.Set("role", role); c.Next() })
+		r.GET("/x", RoleGuard(guard...), func(c *gin.Context) { c.JSON(200, gin.H{"ok": true}) })
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", "/x", nil))
+		return w.Code
+	}
+	if c := mk("admin", "expert", "admin"); c != 200 {
+		t.Errorf("admin via (expert,admin): got %d want 200", c)
+	}
+	if c := mk("expert", "expert"); c != 200 {
+		t.Errorf("expert via (expert): got %d want 200", c)
+	}
+	if c := mk("user", "expert", "admin"); c != 403 {
+		t.Errorf("user via (expert,admin): got %d want 403", c)
+	}
+	if c := mk("user"); c != 403 { // empty allowed list
+		t.Errorf("no allowed roles: got %d want 403", c)
+	}
+}
+
+func TestRoleGuard_MissingRole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	// No "role" set in context.
+	r.GET("/x", RoleGuard("admin"), func(c *gin.Context) { t.Error("must not run") })
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/x", nil))
+	if w.Code != 403 {
+		t.Errorf("missing role: got %d want 403", w.Code)
 	}
 }

@@ -32,3 +32,10 @@ type CreateQuestionRequest struct {
 	Tags            []string `json:"tags"`
 	Confidence      *float64 `json:"confidence"`
 }
+
+// UpdateUserRequest is the body of PUT /api/v1/users/:id (admin-only, full-replace).
+type UpdateUserRequest struct {
+	Email  string `json:"email"  binding:"required,email"`
+	Role   string `json:"role"   binding:"required,oneof=user expert admin"`
+	Active bool   `json:"active"`
+}

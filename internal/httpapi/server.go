@@ -72,7 +72,7 @@ func (s *Server) registerRoutes() {
 	{
 		authGroup.POST("/register", authHandler.Register)
 		authGroup.POST("/login", authHandler.Login)
-		authGroup.POST("/refresh", AuthMiddleware(s.jwtMgr), authHandler.Refresh)
+		authGroup.POST("/refresh", AuthMiddleware(s.jwtMgr, s.userRepo), authHandler.Refresh)
 	}
 
 	// Sessions + Images (auth required)
@@ -80,7 +80,7 @@ func (s *Server) registerRoutes() {
 	imageHandler := handlers.NewImageHandler(s.imageRepo, s.jobQueue, s.uploadCfg)
 
 	apiGroup := r.Group("/api/v1")
-	apiGroup.Use(AuthMiddleware(s.jwtMgr))
+	apiGroup.Use(AuthMiddleware(s.jwtMgr, s.userRepo))
 	{
 		sessions := apiGroup.Group("/sessions")
 		{
@@ -94,20 +94,34 @@ func (s *Server) registerRoutes() {
 			sessions.GET("/:id/images", SessionWindow(s.sessionRepo), imageHandler.List)
 		}
 
+		// Profile — any authenticated user (no RoleGuard).
+		apiGroup.GET("/profile", authHandler.Profile)
+
+		// User management — admin only (spec §Authorization).
+		userHandler := handlers.NewUserHandler(s.userRepo)
+		users := apiGroup.Group("/users", RoleGuard("admin"))
+		{
+			users.GET("", userHandler.List)
+			users.PUT("/:id", userHandler.Update)
+			users.DELETE("/:id", userHandler.Delete)
+			users.POST("/:id/reset-password", userHandler.ResetPassword)
+		}
+
 		// Questions — both roles; behavior splits inside the handler.
-		// POST and PUT are expert-only via per-route RoleGuard (spec §4.4).
+		// POST, PUT, and DELETE are expert- or admin-only via per-route RoleGuard.
 		questionHandler := handlers.NewQuestionHandler(s.questionRepo, s.sessionRepo, s.embedder)
 		questions := apiGroup.Group("/questions")
 		{
 			questions.GET("", questionHandler.List)
 			questions.GET("/:id", questionHandler.Get)
-			questions.POST("", RoleGuard("expert"), questionHandler.Create)
-			questions.PUT("/:id", RoleGuard("expert"), questionHandler.Update)
+			questions.POST("", RoleGuard("expert", "admin"), questionHandler.Create)
+			questions.PUT("/:id", RoleGuard("expert", "admin"), questionHandler.Update)
+			questions.DELETE("/:id", RoleGuard("expert", "admin"), questionHandler.Delete)
 		}
 
-		// Expert image access — expert only (spec §4.5).
+		// Expert image access — expert + admin (spec §Authorization).
 		expertHandler := handlers.NewExpertHandler(s.imageRepo)
-		expertImages := apiGroup.Group("/images", RoleGuard("expert"))
+		expertImages := apiGroup.Group("/images", RoleGuard("expert", "admin"))
 		{
 			expertImages.GET("/:id", expertHandler.GetImage)
 			expertImages.GET("/:id/verification-report", expertHandler.GetVerificationReport)

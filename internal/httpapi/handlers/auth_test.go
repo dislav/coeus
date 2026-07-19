@@ -26,7 +26,7 @@ func (m *mockUserRepo) Create(_ context.Context, email, hash, role string) (*sto
 	if _, ok := m.users[email]; ok {
 		return nil, fmt.Errorf("create: %w", domain.ErrDuplicate)
 	}
-	u := &storage.User{ID: uuid.NewString(), Email: email, PasswordHash: hash, Role: role}
+	u := &storage.User{ID: uuid.NewString(), Email: email, PasswordHash: hash, Role: role, Active: true}
 	m.users[email] = u
 	return u, nil
 }
@@ -44,6 +44,16 @@ func (m *mockUserRepo) FindByID(_ context.Context, id string) (*storage.User, er
 		}
 	}
 	return nil, fmt.Errorf("find: %w", domain.ErrNotFound)
+}
+func (m *mockUserRepo) List(context.Context, storage.UserFilter, int, int) ([]*storage.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) Update(context.Context, string, storage.UserUpdate, string) (*storage.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) Delete(context.Context, string, string) error { return nil }
+func (m *mockUserRepo) ResetPassword(context.Context, string) (string, error) {
+	return "stub", nil
 }
 
 func newTestAuthHandler() (*AuthHandler, *mockUserRepo) {
@@ -130,6 +140,34 @@ func TestLoginHandler_WrongPassword(t *testing.T) {
 	loginBody, _ := json.Marshal(map[string]string{"email": "wp@test.com", "password": "wrong"})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("POST", "/auth/login", bytes.NewReader(loginBody)))
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestLoginHandler_DeactivatedAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, repo := newTestAuthHandler()
+
+	// Insert a deactivated user directly into the mock (Create always sets Active: true).
+	hash, err := auth.HashPassword("secret123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.users["deactivated@test.com"] = &storage.User{
+		ID:           uuid.NewString(),
+		Email:        "deactivated@test.com",
+		PasswordHash: hash,
+		Role:         "user",
+		Active:       false,
+	}
+
+	r := gin.New()
+	r.POST("/auth/login", h.Login)
+
+	body, _ := json.Marshal(map[string]string{"email": "deactivated@test.com", "password": "secret123"})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST", "/auth/login", bytes.NewReader(body)))
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", w.Code)
 	}

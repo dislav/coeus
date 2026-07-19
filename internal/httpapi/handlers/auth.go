@@ -88,7 +88,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	token, err := h.jwtMgr.Issue(user.ID, user.Role)
+	if !user.Active {
+		c.JSON(http.StatusUnauthorized, errorResponse(domain.ErrUnauthorized))
+		return
+	}
+
+	token, err := h.jwtMgr.Issue(user.ID, user.Role, user.Active, user.TokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
@@ -98,14 +103,25 @@ func (h *AuthHandler) Login(c *gin.Context) {
 }
 
 func (h *AuthHandler) Refresh(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	role, _ := c.Get("role")
+	v, _ := c.Get("user")
+	user := v.(*storage.User)
 
-	token, err := h.jwtMgr.Issue(userID.(string), role.(string))
+	token, err := h.jwtMgr.Issue(user.ID, user.Role, user.Active, user.TokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
 
-	c.JSON(http.StatusOK, authResponse{Token: token, Role: role.(string)})
+	c.JSON(http.StatusOK, authResponse{Token: token, Role: user.Role})
+}
+
+// Profile — GET /api/v1/profile. Reads the *storage.User stashed by AuthMiddleware.
+func (h *AuthHandler) Profile(c *gin.Context) {
+	v, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusNotFound, errorResponse(domain.ErrNotFound))
+		return
+	}
+	user := v.(*storage.User)
+	c.JSON(http.StatusOK, userToResponse(user))
 }

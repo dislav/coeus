@@ -228,6 +228,8 @@ func (r *fakeQuestionRepo) LinkToSession(_ context.Context, sessionID, imageID, 
 	return nil
 }
 
+func (r *fakeQuestionRepo) Delete(_ context.Context, id string) error { return nil }
+
 type fakeJobQueue struct {
 	completed []string
 	failed    []struct{ id, msg string }

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -663,7 +664,7 @@ func TestQuestionsIntegration(t *testing.T) {
 	t.Run("(f) PUT complete payload updates every editable field", func(t *testing.T) {
 		rExp := newIntQuestionRouter("expert", f.expert.ID, questions, sessions)
 		w := intDoReq(t, rExp, "PUT", "/api/v1/questions/"+f.qAModID,
-			`{"status":"verified","choices":["X","Y","Z"],"answers":["X","Y"],"explanation":"new expl","tags":["tag1","tag2"],"confidence":0.85}`)
+			`{"status":"verified","type":"multiple_choice","choices":["X","Y","Z"],"answers":["X","Y"],"explanation":"new expl","tags":["tag1","tag2"],"confidence":0.85}`)
 		if w.Code != http.StatusOK {
 			t.Fatalf("PUT complete: got %d want 200: %s", w.Code, w.Body.String())
 		}
@@ -697,7 +698,7 @@ func TestQuestionsIntegration(t *testing.T) {
 
 		// Start from qAErr (status=error). Transition: error → verified.
 		w := intDoReq(t, rExp, "PUT", "/api/v1/questions/"+f.qAErrID,
-			`{"status":"verified","choices":["A","B"],"answers":["A"]}`)
+			`{"status":"verified","type":"multiple_choice","choices":["A","B"],"answers":["A"]}`)
 		if w.Code != http.StatusOK {
 			t.Fatalf("PUT verified: %d: %s", w.Code, w.Body.String())
 		}
@@ -717,7 +718,7 @@ func TestQuestionsIntegration(t *testing.T) {
 
 		// verified → moderation => both NULL.
 		w = intDoReq(t, rExp, "PUT", "/api/v1/questions/"+f.qAErrID,
-			`{"status":"moderation","choices":["A","B"],"answers":["A"]}`)
+			`{"status":"moderation","type":"multiple_choice","choices":["A","B"],"answers":["A"]}`)
 		if w.Code != http.StatusOK {
 			t.Fatalf("PUT moderation: %d: %s", w.Code, w.Body.String())
 		}
@@ -734,7 +735,7 @@ func TestQuestionsIntegration(t *testing.T) {
 
 		// moderation → error => both NULL.
 		w = intDoReq(t, rExp, "PUT", "/api/v1/questions/"+f.qAErrID,
-			`{"status":"error","choices":["A","B"],"answers":["A"]}`)
+			`{"status":"error","type":"multiple_choice","choices":["A","B"],"answers":["A"]}`)
 		if w.Code != http.StatusOK {
 			t.Fatalf("PUT error: %d: %s", w.Code, w.Body.String())
 		}
@@ -819,4 +820,51 @@ func TestQuestionsIntegration(t *testing.T) {
 			t.Fatalf("answers changed: %v → %v", pre.Answers, post.Answers)
 		}
 	})
+}
+
+func TestQuestionRepo_Delete(t *testing.T) {
+	ctx := context.Background()
+	pool := setupTestDB(t)
+	questions := NewQuestionRepo(pool)
+
+	// 404 when absent.
+	err := questions.Delete(ctx, "00000000-0000-0000-0000-000000000000")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("absent: err = %v, want ErrNotFound", err)
+	}
+
+	// Deletable when zero references.
+	free, _ := questions.Create(ctx, &domain.Question{Text: "Free", TextHash: "del-free", TextNorm: "free", Status: domain.QuestionStatusVerified, Choices: []string{"a"}, ChoiceLabeling: "letter"})
+	if err := questions.Delete(ctx, free); err != nil {
+		t.Fatalf("delete free: %v", err)
+	}
+	if _, err := questions.FindByID(ctx, free); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("free after delete: err = %v, want ErrNotFound", err)
+	}
+
+	// Deletable when referenced but status='error'.
+	// (Build a referenced error question via image/session infra.)
+	imgs := NewImageRepo(pool)
+	sessions := NewSessionRepo(pool)
+	users := NewUserRepo(pool)
+	u, _ := users.Create(ctx, "qdel@example.com", "h", "user")
+	sess, _ := sessions.Create(ctx, u.ID, 3600, 0)
+	imgID, _ := imgs.Create(ctx, sess.ID, []byte("o"), "image/png", 1, 1)
+	errQ, _ := questions.Create(ctx, &domain.Question{Text: "Err", TextHash: "del-err", TextNorm: "err", Status: domain.QuestionStatusError, Choices: []string{"a"}, ChoiceLabeling: "letter"})
+	questions.LinkToSession(ctx, sess.ID, imgID, errQ, 1, 0.9)
+	if err := questions.Delete(ctx, errQ); err != nil {
+		t.Fatalf("delete error question (referenced): %v", err)
+	}
+
+	// 409 question_in_use when referenced and not error.
+	inUse, _ := questions.Create(ctx, &domain.Question{Text: "InUse", TextHash: "del-inuse", TextNorm: "inuse", Status: domain.QuestionStatusVerified, Choices: []string{"a"}, ChoiceLabeling: "letter"})
+	questions.LinkToSession(ctx, sess.ID, imgID, inUse, 2, 0.9)
+	err = questions.Delete(ctx, inUse)
+	var de *domain.Error
+	if !errors.As(err, &de) || de.Code != "question_in_use" {
+		t.Fatalf("in-use: err = %v, want code question_in_use", err)
+	}
+	if !strings.Contains(de.Message, "1 session") {
+		t.Errorf("in-use message = %q, want it to name the count", de.Message)
+	}
 }

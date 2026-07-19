@@ -74,7 +74,14 @@ func (r *QuestionRepo) LinkToSession(ctx context.Context, sessionID, imageID, qu
 
 func (r *QuestionRepo) FindByID(ctx context.Context, id string) (*domain.Question, error) {
 	row := r.pool.QueryRow(ctx, questionSelectBase+` WHERE q.id = $1`, id)
-	return scanQuestion(row)
+	q, err := scanQuestion(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("find question: %w", domain.ErrNotFound)
+		}
+		return nil, fmt.Errorf("find question: %w", err)
+	}
+	return q, nil
 }
 
 func (r *QuestionRepo) FindExact(ctx context.Context, hash string) (*domain.Question, error) {
@@ -367,6 +374,26 @@ func (r *QuestionRepo) CountUnresolvedForImage(ctx context.Context, imageID stri
 		return 0, fmt.Errorf("count unresolved: %w", err)
 	}
 	return count, nil
+}
+
+func (r *QuestionRepo) Delete(ctx context.Context, id string) error {
+	q, err := r.FindByID(ctx, id)
+	if err != nil {
+		return err // wraps domain.ErrNotFound
+	}
+
+	var n int
+	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM session_questions WHERE question_id = $1`, id).Scan(&n); err != nil {
+		return fmt.Errorf("count session_questions: %w", err)
+	}
+	if n > 0 && q.Status != domain.QuestionStatusError {
+		return domain.NewError("question_in_use", fmt.Sprintf("question is linked to %d session(s)", n))
+	}
+
+	if _, err := r.pool.Exec(ctx, `DELETE FROM questions WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("delete question: %w", err)
+	}
+	return nil
 }
 
 func (r *QuestionRepo) linkTag(ctx context.Context, questionID, tagName string) error {

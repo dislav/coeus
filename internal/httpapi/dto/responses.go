@@ -66,3 +66,20 @@ type UserListResponse struct {
 type ResetPasswordResponse struct {
 	Password string `json:"password"`
 }
+
+// ImportRowError is one failed row in an import report: 1-based file row
+// number plus the validation/upsert message.
+type ImportRowError struct {
+	Row     int    `json:"row"`
+	Message string `json:"message"`
+}
+
+// ImportReportResponse is returned on POST /api/v1/questions/upload (200 OK)
+// whenever the file itself parses — even if every row failed (spec §4.2).
+type ImportReportResponse struct {
+	TotalRows int              `json:"total_rows"`
+	Created   int              `json:"created"`
+	Updated   int              `json:"updated"`
+	Failed    int              `json:"failed"`
+	Errors    []ImportRowError `json:"errors"`
+}

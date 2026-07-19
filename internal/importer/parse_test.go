@@ -85,8 +85,12 @@ func TestParseCSV_Malformed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for malformed csv, got nil")
 	}
-	if !strings.Contains(err.Error(), "malformed csv") {
-		t.Errorf("err = %q, want it to mention malformed csv", err.Error())
+	msg := err.Error()
+	if !strings.Contains(msg, "malformed csv") {
+		t.Errorf("err = %q, want it to mention malformed csv", msg)
+	}
+	if !strings.Contains(msg, "line 1") {
+		t.Errorf("err = %q, want it to mention the line number", msg)
 	}
 }
 

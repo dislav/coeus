@@ -71,6 +71,10 @@ func parseCSV(r io.Reader) ([][]string, error) {
 			break
 		}
 		if err != nil {
+			var pe *csv.ParseError
+			if errors.As(err, &pe) {
+				err = fmt.Errorf("line %d, column %d: %w", pe.StartLine, pe.Column, pe.Err)
+			}
 			return nil, domain.NewError("validation", fmt.Sprintf("malformed csv: %v", err))
 		}
 		rows = append(rows, rec)

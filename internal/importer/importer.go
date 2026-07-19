@@ -91,7 +91,14 @@ func (s *Service) Import(ctx context.Context, r io.Reader, kind FileKind, userID
 
 	// Per-row upsert, each in its own transaction (atomic per row). A failed
 	// row is recorded; later rows proceed — bad rows never block good rows.
+	processed := 0
 	for _, vr := range valid {
+		if ctx.Err() != nil {
+			s.log.Warn("import cancelled during upsert",
+				"processed", processed, "skipped", len(valid)-processed,
+				"err", ctx.Err())
+			break
+		}
 		created, err := s.questions.UpsertFromImport(ctx, vr.q)
 		if err != nil {
 			s.log.Warn("import upsert failed", "row", vr.row, "err", err)
@@ -103,6 +110,7 @@ func (s *Service) Import(ctx context.Context, r io.Reader, kind FileKind, userID
 		} else {
 			rep.Updated++
 		}
+		processed++
 	}
 	return rep, nil
 }

@@ -53,6 +53,9 @@ func (r *QuestionRepo) UpsertFromImport(ctx context.Context, q *domain.Question)
 		    verified_by    = EXCLUDED.verified_by,
 		    embedding      = COALESCE(EXCLUDED.embedding, questions.embedding),
 		    updated_at     = now()
+		-- (xmax = 0) is true on INSERT, false on UPDATE — the canonical
+		-- Postgres trick to distinguish the two arms of an upsert in a
+		-- single round trip.
 		RETURNING id, (xmax = 0)
 	`, q.Number, q.Text, q.TextNorm, q.TextHash,
 		choicesJSON, answersJSON, q.ChoiceLabeling, q.Type,

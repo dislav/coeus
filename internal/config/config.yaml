@@ -47,3 +47,6 @@ upload:
     - "image/jpeg"
     - "image/png"
     - "image/webp"
+
+import:
+  max_rows: 20000

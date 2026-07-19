@@ -326,3 +326,37 @@ func TestApplyEnvOverrides_ReviewerEffortInvalid(t *testing.T) {
 		t.Fatal("expected error for invalid COEUS_AI_REVIEWER_EFFORT, got nil")
 	}
 }
+
+func TestLoadDefaults_ImportMaxRows(t *testing.T) {
+	t.Setenv("COEUS_POSTGRES_DSN", "postgres://test:test@localhost:5432/coeus?sslmode=disable")
+	t.Setenv("COEUS_JWT_SECRET", "test-secret")
+	t.Setenv("COEUS_AI_VISION_API_KEY", "kimi-key")
+	t.Setenv("COEUS_AI_REVIEWER_API_KEY", "ds-key")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Import.MaxRows != 20000 {
+		t.Errorf("import.max_rows = %d, want 20000", cfg.Import.MaxRows)
+	}
+}
+
+func TestApplyEnvOverrides_ImportMaxRows(t *testing.T) {
+	t.Setenv("COEUS_IMPORT_MAX_ROWS", "500")
+	var cfg Config
+	if err := applyEnvOverrides(&cfg); err != nil {
+		t.Fatalf("applyEnvOverrides: %v", err)
+	}
+	if cfg.Import.MaxRows != 500 {
+		t.Errorf("MaxRows = %d, want 500", cfg.Import.MaxRows)
+	}
+}
+
+func TestApplyEnvOverrides_ImportMaxRowsInvalid(t *testing.T) {
+	t.Setenv("COEUS_IMPORT_MAX_ROWS", "many")
+	var cfg Config
+	if err := applyEnvOverrides(&cfg); err == nil {
+		t.Fatal("expected error for invalid COEUS_IMPORT_MAX_ROWS, got nil")
+	}
+}

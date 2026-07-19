@@ -22,6 +22,7 @@ type Config struct {
 	Pipeline PipelineConfig `yaml:"pipeline"`
 	Workers  WorkersConfig  `yaml:"workers"`
 	Upload   UploadConfig   `yaml:"upload"`
+	Import   ImportConfig   `yaml:"import"`
 }
 
 type ServerConfig struct {
@@ -103,6 +104,12 @@ type WorkersConfig struct {
 type UploadConfig struct {
 	MaxBytes     int64    `yaml:"max_bytes"`
 	AllowedMimes []string `yaml:"allowed_mimes"`
+}
+
+// ImportConfig bounds the synchronous question-import endpoint
+// (spec §10). 20000 keeps the worst-case runtime within server.write_timeout.
+type ImportConfig struct {
+	MaxRows int `yaml:"max_rows"`
 }
 
 // Load reads the embedded config.yaml and applies env overrides.
@@ -192,6 +199,13 @@ func applyEnvOverrides(cfg *Config) error {
 		default:
 			return fmt.Errorf("invalid COEUS_CORS_ALLOW_CREDENTIALS %q: expected true|false|1|0", v)
 		}
+	}
+	if v := os.Getenv("COEUS_IMPORT_MAX_ROWS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("invalid COEUS_IMPORT_MAX_ROWS %q: %w", v, err)
+		}
+		cfg.Import.MaxRows = n
 	}
 	return nil
 }

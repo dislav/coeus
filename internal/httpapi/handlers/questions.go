@@ -174,25 +174,17 @@ func (h *QuestionHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Structural rules are type-conditional (spec §3.5.4). Binding guarantees:
+	// Structural rules are type-conditional (spec §3.5.4), shared with Create
+	// and the importer via domain.ValidateDraft. Binding guarantees:
 	//   - req.Type is one of {multiple_choice, free_response}
 	//   - every present choice is non-empty
 	//   - len(req.Answers) >= 1
-	switch req.Type {
-	case domain.QuestionTypeMultipleChoice:
-		if len(req.Choices) < 2 {
-			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
-			return
-		}
-		if !answersSubsetOfChoices(req.Answers, req.Choices) {
-			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
-			return
-		}
-	case domain.QuestionTypeFreeResponse:
-		if len(req.Choices) != 0 {
-			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
-			return
-		}
+	// Update's DTO carries no question text, so the placeholder keeps
+	// ValidateDraft's non-empty-text check trivially satisfied; only the
+	// type-conditional checks are load-bearing here.
+	if err := domain.ValidateDraft(" ", req.Choices, req.Answers, req.Type); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+		return
 	}
 
 	// Field rules: confidence range; tags count + non-empty (spec §3.2.3).
@@ -251,25 +243,6 @@ func (h *QuestionHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, toExpertResponse(ev))
 }
 
-// answersSubsetOfChoices reports whether every answer equals some choice using
-// exact, case-sensitive Go string equality (no normalization). Duplicates in
-// answers are fine as long as each is present in choices (spec §3.2.3).
-func answersSubsetOfChoices(answers, choices []string) bool {
-	for _, a := range answers {
-		found := false
-		for _, ch := range choices {
-			if a == ch {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
 // Delete — DELETE /api/v1/questions/:id (expert, admin).
 func (h *QuestionHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
@@ -300,22 +273,11 @@ func (h *QuestionHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Type-conditional structural validation (spec §3.5.4).
-	switch req.Type {
-	case domain.QuestionTypeMultipleChoice:
-		if len(req.Choices) < 2 {
-			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
-			return
-		}
-		if !answersSubsetOfChoices(req.Answers, req.Choices) {
-			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
-			return
-		}
-	case domain.QuestionTypeFreeResponse:
-		if len(req.Choices) != 0 {
-			c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
-			return
-		}
+	// Type-conditional structural validation (spec §3.5.4), shared with Update
+	// and the importer via domain.ValidateDraft.
+	if err := domain.ValidateDraft(req.Question, req.Choices, req.Answers, req.Type); err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse(domain.ErrValidation))
+		return
 	}
 
 	confidence := 0.99

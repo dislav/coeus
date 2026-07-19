@@ -51,3 +51,23 @@ func TestQuestionPost_RoleGuardRejectsUser(t *testing.T) {
 		t.Fatalf("user post: got %d want 403", w.Code)
 	}
 }
+
+// TestQuestionUpload_RoleGuardRejectsUser verifies the upload route is gated by
+// RoleGuard("expert", "admin"): a user-role caller gets 403 at the middleware
+// layer before the handler runs. Mirrors the route wiring in registerRoutes.
+func TestQuestionUpload_RoleGuardRejectsUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("role", "user"); c.Set("user_id", "u1"); c.Next() })
+	r.POST("/api/v1/questions/upload", RoleGuard("expert", "admin"), func(c *gin.Context) {
+		t.Error("handler must not run for user role")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/questions/upload", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("user upload: got %d want 403", w.Code)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"github.com/vlgrigoriev/coeus/internal/auth"
 	"github.com/vlgrigoriev/coeus/internal/config"
 	"github.com/vlgrigoriev/coeus/internal/httpapi/handlers"
+	"github.com/vlgrigoriev/coeus/internal/importer"
 	"github.com/vlgrigoriev/coeus/internal/pipeline"
 	"github.com/vlgrigoriev/coeus/internal/storage"
 )
@@ -24,6 +25,7 @@ type Server struct {
 	pool         *pgxpool.Pool
 	uploadCfg    config.UploadConfig
 	embedder     pipeline.AIEmbedder
+	importSvc    *importer.Service
 }
 
 func NewServer(
@@ -37,6 +39,7 @@ func NewServer(
 	uploadCfg config.UploadConfig,
 	embedder pipeline.AIEmbedder,
 	corsCfg config.CORSConfig,
+	importSvc *importer.Service,
 ) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -54,6 +57,7 @@ func NewServer(
 		router: r, userRepo: userRepo, sessionRepo: sessionRepo,
 		imageRepo: imageRepo, questionRepo: questionRepo, jobQueue: jobQueue,
 		jwtMgr: jwtMgr, pool: pool, uploadCfg: uploadCfg, embedder: embedder,
+		importSvc: importSvc,
 	}
 	s.registerRoutes()
 	return s
@@ -110,11 +114,13 @@ func (s *Server) registerRoutes() {
 		// Questions — both roles; behavior splits inside the handler.
 		// POST, PUT, and DELETE are expert- or admin-only via per-route RoleGuard.
 		questionHandler := handlers.NewQuestionHandler(s.questionRepo, s.sessionRepo, s.embedder)
+		questionImportHandler := handlers.NewQuestionImportHandler(s.importSvc, s.uploadCfg)
 		questions := apiGroup.Group("/questions")
 		{
 			questions.GET("", questionHandler.List)
 			questions.GET("/:id", questionHandler.Get)
 			questions.POST("", RoleGuard("expert", "admin"), questionHandler.Create)
+			questions.POST("/upload", RoleGuard("expert", "admin"), questionImportHandler.Upload)
 			questions.PUT("/:id", RoleGuard("expert", "admin"), questionHandler.Update)
 			questions.DELETE("/:id", RoleGuard("expert", "admin"), questionHandler.Delete)
 		}

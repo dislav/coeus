@@ -30,6 +30,7 @@ func bootTestServer(t *testing.T, pool *pgxpool.Pool) (*httpapi.Server, *auth.JW
 		config.UploadConfig{},
 		nil, // embedder unused
 		config.CORSConfig{AllowedOrigins: []string{"*"}},
+		nil, // import service unused by these routes
 	)
 	return srv, jwt, userRepo
 }

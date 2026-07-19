@@ -15,6 +15,7 @@ import (
 	"github.com/vlgrigoriev/coeus/internal/auth"
 	"github.com/vlgrigoriev/coeus/internal/config"
 	"github.com/vlgrigoriev/coeus/internal/httpapi"
+	"github.com/vlgrigoriev/coeus/internal/importer"
 	"github.com/vlgrigoriev/coeus/internal/pipeline"
 	"github.com/vlgrigoriev/coeus/internal/storage/postgres"
 )
@@ -61,9 +62,16 @@ func Build(ctx context.Context, cfg *config.Config) (*App, error) {
 		log.Info("embedder disabled — semantic dedup skipped (set COEUS_AI_EMBEDDER_API_KEY to enable)")
 	}
 
+	// emb must remain a nil-able interface variable: it is declared as
+	// `var emb pipeline.AIEmbedder` and assigned only when
+	// COEUS_AI_EMBEDDER_API_KEY is set (above). Interface-to-interface
+	// assignment preserves true nil, so the importer Service's nil-checks
+	// work. Never pass a concrete (*embedder.Embedder)(nil) (spec §8).
+	imp := importer.New(questionRepo, emb, cfg.Import.MaxRows, log)
+
 	server := httpapi.NewServer(
 		userRepo, sessionRepo, imageRepo, questionRepo, jobQueue,
-		jwtMgr, pool, cfg.Upload, emb, cfg.Server.CORS,
+		jwtMgr, pool, cfg.Upload, emb, cfg.Server.CORS, imp,
 	)
 
 	vips.Startup(nil)

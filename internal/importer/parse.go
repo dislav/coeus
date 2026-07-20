@@ -58,10 +58,13 @@ func SniffKind(data []byte) (FileKind, error) {
 	}
 }
 
-// parseCSV streams all rows from a UTF-8 CSV reader (spec §5.2). Variable
-// column counts are allowed here and handled per-row by normalizeRow.
+// parseCSV streams all rows from a UTF-8 CSV reader (spec §5.2). The column
+// delimiter is ';' (Excel ru-RU export style; commas are ordinary cell
+// content, multi-value cells are quoted). Variable column counts are allowed
+// here and handled per-row by normalizeRow.
 func parseCSV(r io.Reader) ([][]string, error) {
 	cr := csv.NewReader(r)
+	cr.Comma = ';'
 	cr.FieldsPerRecord = -1
 	cr.TrimLeadingSpace = true
 	var rows [][]string

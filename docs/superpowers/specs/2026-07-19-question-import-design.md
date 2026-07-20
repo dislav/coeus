@@ -123,6 +123,7 @@ Accepted risk: detection is content-only, so any `text/*` payload (e.g. an HTML 
 ### 5.2 CSV parsing
 
 - Stdlib `encoding/csv` with a streaming reader.
+- **Column delimiter: `;`** (`cr.Comma = ';'`) — Excel ru-RU export style; commas are ordinary cell content, multi-value cells must be quoted.
 - `FieldsPerRecord = -1` (variable column counts handled at the row level, see below).
 - `TrimLeadingSpace = true`.
 - UTF-8 only (consequence of sniffing, above).

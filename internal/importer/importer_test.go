@@ -69,8 +69,8 @@ func TestService_ImportHappyPath(t *testing.T) {
 	svc := New(up, emb, 100, quietLog())
 
 	rep, err := svc.Import(context.Background(), csvReader(
-		"What is 2+2?,3;4,4,math,arith",
-		"Explain entropy.,,disorder increases,physics,",
+		`What is 2+2?;"3;4";4;math;arith`,
+		"Explain entropy.;;disorder increases;physics;",
 	), KindCSV, "user-1")
 	if err != nil {
 		t.Fatalf("Import: %v", err)
@@ -96,8 +96,8 @@ func TestService_InFileDuplicatesLastWins(t *testing.T) {
 	svc := New(up, nil, 100, quietLog())
 
 	rep, err := svc.Import(context.Background(), csvReader(
-		"What is 2+2?,3;4,4,first,",
-		"What is 2+2?,3;4,4,second,",
+		`What is 2+2?;"3;4";4;first;`,
+		`What is 2+2?;"3;4";4;second;`,
 	), KindCSV, "user-1")
 	if err != nil {
 		t.Fatalf("Import: %v", err)
@@ -117,9 +117,9 @@ func TestService_RowFailureIsolation(t *testing.T) {
 	svc := New(up, nil, 100, quietLog())
 
 	rep, err := svc.Import(context.Background(), csvReader(
-		"Good one?,a;b,a,,",
-		"Bad one?,only,a,,", // 1 choice ⇒ row error
-		"Good two?,x;y,y,,",
+		`Good one?;"a;b";a;;`,
+		"Bad one?;only;a;;", // 1 choice ⇒ row error
+		`Good two?;"x;y";y;;`,
 	), KindCSV, "user-1")
 	if err != nil {
 		t.Fatalf("Import: %v", err)
@@ -143,9 +143,9 @@ func TestService_TooManyRows(t *testing.T) {
 	svc := New(up, nil, 2, quietLog())
 
 	_, err := svc.Import(context.Background(), csvReader(
-		"q1?,a;b,a,,",
-		"q2?,a;b,a,,",
-		"q3?,a;b,a,,",
+		`q1?;"a;b";a;;`,
+		`q2?;"a;b";a;;`,
+		`q3?;"a;b";a;;`,
 	), KindCSV, "user-1")
 	if err != ErrTooManyRows {
 		t.Errorf("err = %v, want ErrTooManyRows", err)
@@ -159,7 +159,7 @@ func TestService_NilEmbedderSkipsEmbedding(t *testing.T) {
 	up := newFakeUpserter()
 	svc := New(up, nil, 100, quietLog()) // nil embedder
 
-	rep, err := svc.Import(context.Background(), csvReader("q?,a;b,a,,"), KindCSV, "user-1")
+	rep, err := svc.Import(context.Background(), csvReader(`q?;"a;b";a;;`), KindCSV, "user-1")
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestService_EmbedChunkFailureSkipsRemaining(t *testing.T) {
 	// 150 rows ⇒ 2 chunks of (100, 50). First chunk fails ⇒ only 1 call.
 	rows := make([]string, 150)
 	for i := range rows {
-		rows[i] = fmt.Sprintf("Question number %d?,a;b,a,,", i)
+		rows[i] = fmt.Sprintf(`Question number %d?;"a;b";a;;`, i)
 	}
 	rep, err := svc.Import(context.Background(), csvReader(rows...), KindCSV, "user-1")
 	if err != nil {
@@ -205,7 +205,7 @@ func TestService_RowErrorCap(t *testing.T) {
 	// 101 invalid rows (1 choice each) ⇒ Failed=101 but Errors capped at 100.
 	rows := make([]string, 101)
 	for i := range rows {
-		rows[i] = fmt.Sprintf("Bad %d?,only,a,,", i)
+		rows[i] = fmt.Sprintf("Bad %d?;only;a;;", i)
 	}
 	rep, err := svc.Import(context.Background(), csvReader(rows...), KindCSV, "user-1")
 	if err != nil {
@@ -224,7 +224,7 @@ func TestService_UpsertFailureRecorded(t *testing.T) {
 	up.err = errors.New("db exploded")
 	svc := New(up, nil, 100, quietLog())
 
-	rep, err := svc.Import(context.Background(), csvReader("q?,a;b,a,,"), KindCSV, "user-1")
+	rep, err := svc.Import(context.Background(), csvReader(`q?;"a;b";a;;`), KindCSV, "user-1")
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -241,9 +241,9 @@ func TestService_ReportArithmeticAndRowNumbers(t *testing.T) {
 	svc := New(up, nil, 100, quietLog())
 
 	rep, err := svc.Import(context.Background(), csvReader(
-		"New question?,a;b,a,,",          // created (row 1)
-		"Bad row?,solo,a,,",              // failed  (row 2)
-		"New question?,a;b,a,,updated,",  // updated (row 3, in-file dup)
+		`New question?;"a;b";a;;`,         // created (row 1)
+		"Bad row?;solo;a;;",              // failed  (row 2)
+		`New question?;"a;b";a;updated;`, // updated (row 3, in-file dup)
 	), KindCSV, "user-1")
 	if err != nil {
 		t.Fatalf("Import: %v", err)

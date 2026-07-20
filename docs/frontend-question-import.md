@@ -55,11 +55,12 @@ Headerless, fixed column order. For `.xlsx` only the **first sheet** is read.
 | 4 | `explanation` | Free text. May be empty. |
 | 5 | `tags` | Tags separated by `;`. Max 20. May be empty. |
 
-CSV example:
+CSV example (columns are `;`-separated; any cell that itself contains `;`
+must be wrapped in double quotes):
 
 ```csv
-What is 2+2?;3;4;5;4;Basic arithmetic;math
-Explain entropy.;;disorder increases;Open question;physics;thermo
+What is 2+2?;"3;4;5";4;Basic arithmetic;math
+Explain entropy.;;disorder increases;Open question;"physics;thermo"
 ```
 
 - Row 1: multiple-choice (choices present) → correct answer is `4`.

@@ -85,7 +85,7 @@ func TestImportHandler_UploadCSVReport(t *testing.T) {
 	h, up := newImportHandler(10 * 1024 * 1024)
 	r := newImportRouter(h)
 
-	csvData := []byte("What is 2+2?,3;4,4,math,arith\nBad row?,only,a,,\n")
+	csvData := []byte("What is 2+2?;\"3;4\";4;math;arith\nBad row?;only;a;;\n")
 	body := &bytes.Buffer{}
 	w := newFileMultipartForm(body, csvData)
 	rr := postUpload(t, r, body, w)
@@ -167,7 +167,7 @@ func TestImportHandler_OversizeBody(t *testing.T) {
 	h, _ := newImportHandler(16) // 16-byte cap
 	r := newImportRouter(h)
 
-	csvData := []byte("What is 2+2?,3;4,4,math,arith\n")
+	csvData := []byte("What is 2+2?;\"3;4\";4;math;arith\n")
 	body := &bytes.Buffer{}
 	w := newFileMultipartForm(body, csvData)
 	rr := postUpload(t, r, body, w)

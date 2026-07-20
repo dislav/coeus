@@ -19,7 +19,7 @@ func TestSniffKind(t *testing.T) {
 		want    FileKind
 		wantErr error
 	}{
-		{"csv text", []byte("What is 2+2?,3;4,4,math,arith\n"), KindCSV, nil},
+		{"csv text", []byte(`What is 2+2?;"3;4";4;math;arith` + "\n"), KindCSV, nil},
 		{"xlsx zip", sniffable([]byte("PK\x03\x04")), KindXLSX, nil},
 		{"legacy xls", sniffable([]byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}), 0, ErrLegacyXLS},
 		{"png unsupported", sniffable([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'}), 0, ErrUnsupportedFormat},
@@ -45,7 +45,8 @@ func TestSniffKind(t *testing.T) {
 }
 
 func TestParseCSV(t *testing.T) {
-	in := "q1,a;b,a,e1,t1\nq2,,42,e2,t1;t2\n"
+	// ';' is the column delimiter; commas are plain cell content.
+	in := "q1;a,b;c;d;e1\nq2;;42;e2;t1\n"
 	rows, err := parseCSV(strings.NewReader(in))
 	if err != nil {
 		t.Fatalf("parseCSV: %v", err)
@@ -53,35 +54,63 @@ func TestParseCSV(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("len(rows) = %d, want 2", len(rows))
 	}
-	if rows[0][1] != "a;b" || rows[1][2] != "42" {
+	if rows[0][1] != "a,b" || rows[1][2] != "42" {
 		t.Errorf("rows = %v", rows)
+	}
+}
+
+func TestParseCSV_QuotedSemicolonCell(t *testing.T) {
+	// Multi-value cells contain ';' and must be quoted.
+	in := "q1;\"a;b\";42;e;t\n"
+	rows, err := parseCSV(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("parseCSV: %v", err)
+	}
+	if rows[0][1] != "a;b" {
+		t.Errorf("rows[0][1] = %q, want %q", rows[0][1], "a;b")
+	}
+}
+
+func TestParseCSV_RealExamRow(t *testing.T) {
+	// Regression: first row of docs/exams2026.csv — comma inside the question
+	// text, quoted ';'-separated choices, trailing empty columns.
+	in := `В треугольнике $ABC$ угол C равен $90^{\circ}$. $CH$ – высота, $BH = 12, \operatorname{tg} A = \frac{2}{3}$.Найдите $AH$.;"18;9;27;6";27;;` + "\n"
+	rows, err := parseCSV(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("parseCSV: %v", err)
+	}
+	if len(rows) != 1 || len(rows[0]) != 5 {
+		t.Fatalf("rows = %v", rows)
+	}
+	if rows[0][1] != "18;9;27;6" || rows[0][2] != "27" {
+		t.Errorf("rows[0] = %v", rows[0])
 	}
 }
 
 func TestParseCSV_VariableFields(t *testing.T) {
 	// FieldsPerRecord = -1: ragged rows must not error (handled per-row later).
-	in := "q1,a;b,a\nq2,a;b,a,e,t,EXTRA\n"
+	in := "q1;a;b;a\nq2;a;b;a;e;t;EXTRA\n"
 	rows, err := parseCSV(strings.NewReader(in))
 	if err != nil {
 		t.Fatalf("parseCSV: %v", err)
 	}
-	if len(rows) != 2 || len(rows[0]) != 3 || len(rows[1]) != 6 {
+	if len(rows) != 2 || len(rows[0]) != 4 || len(rows[1]) != 7 {
 		t.Errorf("rows = %v", rows)
 	}
 }
 
 func TestParseCSV_TrimLeadingSpace(t *testing.T) {
-	rows, err := parseCSV(strings.NewReader("q1, a;b ,a,e,t\n"))
+	rows, err := parseCSV(strings.NewReader("q1; a,b ;a;e;t\n"))
 	if err != nil {
 		t.Fatalf("parseCSV: %v", err)
 	}
-	if rows[0][1] != "a;b " {
-		t.Errorf("rows[0][1] = %q, want %q (leading trimmed, trailing kept)", rows[0][1], "a;b ")
+	if rows[0][1] != "a,b " {
+		t.Errorf("rows[0][1] = %q, want %q (leading trimmed, trailing kept)", rows[0][1], "a,b ")
 	}
 }
 
 func TestParseCSV_Malformed(t *testing.T) {
-	_, err := parseCSV(strings.NewReader("q1,\"unterminated,a\n"))
+	_, err := parseCSV(strings.NewReader("q1;\"unterminated;a\n"))
 	if err == nil {
 		t.Fatal("expected error for malformed csv, got nil")
 	}

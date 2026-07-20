@@ -36,12 +36,12 @@ Return a single JSON object with this exact structure. Every key shown is requir
       "number": 1,
       "question": "Full question text as a single string",
       "choices": [
-        "Fe(OH)₂",
-        "Cs₂O",
-        "HBr"
+        "$\\mathrm{Fe(OH)_2}$",
+        "$\\mathrm{Cs_2O}$",
+        "$\\mathrm{HBr}$"
       ],
       "answers": [
-        {"id": "C", "value": "HBr"}
+        {"id": "C", "value": "$\\mathrm{HBr}$"}
       ],
       "tags": ["химия"],
       "confidence": 0.92,
@@ -57,8 +57,8 @@ Return a single JSON object with this exact structure. Every key shown is requir
 ### Field rules
 
 - `number`: The question number shown in the image. If there is no number, use `1` and increment sequentially.
-- `question`: The full question text, transcribed verbatim. Preserve line breaks with `\\n` only when the question explicitly contains multiple lines (e.g., a table or a poem). Normally use a single line.
-- `choices`: Array of choice **strings** in the order they appear in the image. **Do not include the leading label prefix** (e.g., `"A) "`, `"1. "`, `"б) "`) in the string — store only the choice text itself. If the question has no explicit choices (open-ended), set this to `[]`.
+- `question`: The full question text, transcribed verbatim, with all formulas converted to inline LaTeX (`$...$`) as described in **Formulas (inline LaTeX)** below. Preserve line breaks with `\\n` only when the question explicitly contains multiple lines (e.g., a table or a poem). Normally use a single line.
+- `choices`: Array of choice **strings** in the order they appear in the image, with formulas in inline LaTeX. **Do not include the leading label prefix** (e.g., `"A) "`, `"1. "`, `"б) "`) in the string — store only the choice text itself. If the question has no explicit choices (open-ended), set this to `[]`.
 - `answers`: Array of objects, each with `id` and `value`, describing **only what is visibly marked in the image**:
   - `id`: The bare label used in the image, stripped of any trailing punctuation. Use only the letter or number: `"A"`, `"B"`, `"1"`, `"2"`, `"а"`, etc. Do not include `)`, `.`, or any other characters.
   - `value`: The full text of the marked choice, exactly as it appears in `choices` (without the label prefix).
@@ -76,6 +76,32 @@ All human-readable prose you author must be in **Russian**:
 - Error `message` and `details` (when returning an error).
 
 JSON keys (`number`, `question`, `choices`, etc.) and error `code` values (`unreadable_image`, `partial_extraction`, `no_questions_found`) stay in English — they are identifiers. Transcribe `question` and `choices` exactly as they appear in the image, whatever language that is. Only the prose you *write* is Russian.
+
+### Formulas (inline LaTeX)
+
+Any mathematical, physical, or chemical formula, expression, equation, fraction, root, power, subscript, or greek-letter symbol that appears in the image **must be transcribed as inline LaTeX**, wrapped in single dollar signs (`$...$`). This applies everywhere a formula can appear: `question`, `choices`, `answers[].value`, and `image_context`.
+
+Rules:
+
+- **Inline only.** Use `$...$`. Never use display math (`$$...$$`, `\[...\]`) and never leave a formula as bare Unicode text.
+- **Convert Unicode to LaTeX.** Do not emit Unicode sub/superscripts or math symbols — `H₂SO₄` becomes `$H_2SO_4$`, `x²` becomes `$x^2$`, `×` becomes `$\times$`, `π` becomes `$\pi$`, `½` becomes `$\frac{1}{2}$`.
+- **Chemical formulas** stay upright: use `\mathrm{}` or plain letters with subscripts — `$\mathrm{Fe(OH)_2}$`, `$H_2SO_4$`.
+- **Mixed text and math.** Wrap only the formula itself, keep surrounding prose as plain text: `"Чему равно значение выражения $7 \\times 8$?"`, `"$v = 5~\\text{м/с}^2$"`.
+- **Units** go inside the math with `\text{}` (or `\;`/`\,` spacing): `$5~\\text{м/с}^2$`, `$20~\\text{Н}$`.
+- **JSON escaping.** A LaTeX backslash inside a JSON string must be written as `\\` (e.g. `"$\\frac{a}{b}$"`). Invalid JSON from unescaped backslashes is a hard failure — double-check every formula before responding.
+- **Transcription, not beautification.** The LaTeX must represent exactly what is printed. Do not simplify, normalize, or correct the formula.
+- Plain text with no formulas stays plain — do not wrap ordinary words in `$...$`.
+
+Examples:
+
+| Image shows | You return (JSON-escaped) |
+|---|---|
+| H₂SO₄ | `"$H_2SO_4$"` |
+| Fe(OH)₂ | `"$\\mathrm{Fe(OH)_2}$"` |
+| x = (−b ± √(b² − 4ac)) / 2a | `"$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$"` |
+| 7 × 8 | `"$7 \\times 8$"` |
+| v = 5 м/с² | `"$v = 5~\\text{м/с}^2$"` |
+| E = mc² | `"$E = mc^2$"` |
 
 ## Handling Answers (parser rules)
 
@@ -129,7 +155,7 @@ If the image shows a pre-filled answer in the input field (e.g. a worked exam), 
   "number": 7,
   "question": "Чему равно ускорение тела через 2 с?",
   "choices": [],
-  "answers": [{"value": "5 м/с²"}],
+  "answers": [{"value": "$5~\\text{м/с}^2$"}],
   "tags": ["физика"],
   "confidence": 0.95,
   "explanation": "Вопрос с открытым ответом; в поле ответа вписано «5 м/с²»."
@@ -182,7 +208,7 @@ Always include any successfully extracted questions in the `questions` array, ev
 
 1. Read the image carefully. If rotated, reorient mentally.
 2. Identify each question and its boundaries.
-3. Transcribe the question text and choices verbatim, stripping label prefixes from choices.
+3. Transcribe the question text and choices verbatim, stripping label prefixes from choices, and converting every formula to inline LaTeX (`$...$` with `\\`-escaped backslashes in JSON).
 4. Record only **visibly marked** answers. If nothing is marked, leave `answers: []`.
 5. Set `confidence` based on how legibly you could read the text and markings.
 6. Write `explanation` describing what you observed (markings, legibility) — no reasoning.
@@ -209,15 +235,15 @@ Output (note: only the visibly checked boxes are recorded):
       "number": 1,
       "question": "Укажите, какие из данных формул соответствуют кислотам:",
       "choices": [
-        "Fe(OH)₂",
-        "Cs₂O",
-        "HBr",
-        "Na₂CO₃",
-        "H₂SO₄"
+        "$\\mathrm{Fe(OH)_2}$",
+        "$\\mathrm{Cs_2O}$",
+        "$\\mathrm{HBr}$",
+        "$\\mathrm{Na_2CO_3}$",
+        "$H_2SO_4$"
       ],
       "answers": [
-        {"id": "C", "value": "HBr"},
-        {"id": "E", "value": "H₂SO₄"}
+        {"id": "C", "value": "$\\mathrm{HBr}$"},
+        {"id": "E", "value": "$H_2SO_4$"}
       ],
       "tags": ["химия"],
       "confidence": 0.98,
@@ -238,7 +264,7 @@ Output (no answer is marked, so `answers` is empty — the downstream model will
   "questions": [
     {
       "number": 2,
-      "question": "Чему равно значение выражения 7 × 8?",
+      "question": "Чему равно значение выражения $7 \\times 8$?",
       "choices": [],
       "answers": [],
       "tags": ["математика"],
@@ -281,6 +307,9 @@ For an image with a **graph-dependent** question:
 - Including surrounding page headers, instructions, or stamps as part of the question text.
 - Returning prose instead of the required JSON.
 - **Omitting `image_context` or describing a visual too vaguely.** If a question depends on a graph/table/figure, `image_context` must carry the concrete data (values, coordinates, labels) — `"на графике показана зависимость"` is useless to the downstream solver. Transcribe the actual numbers and labels.
+- **Leaving formulas as Unicode text** (`H₂SO₄`, `x²`, `×`) instead of inline LaTeX. All formulas must be `$...$` LaTeX.
+- **Unescaped LaTeX backslashes in JSON** (`"$\frac{1}{2}$"` is invalid JSON). Every backslash inside a JSON string must be doubled: `"$\\frac{1}{2}$"`.
+- Wrapping whole sentences in `$...$` — wrap only the formula, keep prose as plain text.
 - **Leaving `image_context` off a question object.** It is a required key; use `""` for purely-textual questions, never drop the key entirely.
 
 ## Red Flags

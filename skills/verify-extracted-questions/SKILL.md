@@ -48,6 +48,8 @@ One or more JSON files matching the `extract-questions-from-image` output schema
 
 Treat the input `answers` as **evidence about what was visually marked in the image**, not as a claim of correctness. Frequently it will be empty (`[]`) — that just means the question was not marked and you must solve it.
 
+**Formulas arrive as inline LaTeX.** The extractor transcribes every formula as `$...$` LaTeX (e.g. `$H_2SO_4$`, `$7 \times 8$`, `$v = 5~\text{м/с}^2$`) in `question`, `choices`, `answers[].value`, and `image_context`. Keep this format everywhere in your output: when you copy a choice into `answers[].value`, copy it verbatim *including its LaTeX*; when you compute an open-ended answer, write it as inline LaTeX too. Never convert formulas back to Unicode sub/superscripts (`H₂SO₄`, `м/с²`).
+
 May also include the optional `error` field from partial extractions.
 
 **Batch:** Accept a directory of JSON files or a single JSON file with multiple independent question sets. Process each independently.
@@ -77,9 +79,9 @@ For each question, **independently determine the correct answer** using your dom
 
 **How to solve:**
 
-- **Multiple-choice with choices:** Pick the correct choice(s). Set `answers` to `{"id": "<letter/number>", "value": "<exact choice text from choices>"}`. The `value` must be copied verbatim from the `choices` array.
+- **Multiple-choice with choices:** Pick the correct choice(s). Set `answers` to `{"id": "<letter/number>", "value": "<exact choice text from choices>"}`. The `value` must be copied verbatim from the `choices` array — including its inline-LaTeX form (e.g. `"$\\mathrm{HBr}$"`, not `HBr` or `НВг`).
 - **Multiple correct answers:** If the question says "choose all that apply" / "один или несколько" / "выберите верные утверждения", include **every** correct choice in `answers` and exclude every incorrect one. Multi-ness is derived from the answer count.
-- **Open-ended (no choices):** Compute or state the answer directly, e.g. `{"value": "2 м/с²"}` (no `id`), and set `choices: []`.
+- **Open-ended (no choices):** Compute or state the answer directly in inline LaTeX, e.g. `{"value": "$2~\\text{м/с}^2$"}` (no `id`), and set `choices: []`.
 - **Question with `image_context`:** When `image_context` is non-empty, it contains the concrete data (axes, coordinates, table cells, labels) of a graph/diagram/figure the question depends on. Use it as the visual data needed to solve the question — read values from it, perform calculations on the transcribed data points, etc. It is authoritative; do not reply that you "cannot retrieve the image" — the data is already transcribed for you.
 - **Calculation required:** Show the work briefly in `explanation` (formulas, substitution, result), then put the final answer in `answers`.
 
@@ -109,13 +111,14 @@ For questions with `choices: []` (free-response), apply these confidence tiers:
 
 ### Answer format
 
-Produce **exactly what fills the input field** — include units if implied by the prompt (`2 м/с²`, not `2`), omit surrounding prose. The value must be directly droppable into the blank.
+Produce **exactly what fills the input field** — include units if implied by the prompt (`$2~\text{м/с}^2$`, not `2`), omit surrounding prose. The value must be directly droppable into the blank. Formulas and units follow the inline-LaTeX convention (`$...$` with `\text{}` for units; escape backslashes as `\\` in JSON).
 
 ## Garbled Text Detection
 
 The extractor may have produced OCR/extraction errors. Watch for:
 
-- Chemical formulas with wrong capitalization or subscript (e.g., "H2O" → "H20", "CO2" → "C02", "Fe(OH)z" → "Fe(OH)₂").
+- Malformed or miscopied LaTeX: wrong subscripts/superscripts (`$H_2S0_4$` with a zero, `$CO_3^{2-}$` rendered as `$CO_32-$`), broken commands (`$\frak{1}{2}$` for `$\frac{1}{2}$`), unbalanced braces or `$` delimiters, `\mathrm{}` dropped or misplaced.
+- Chemical formulas with wrong capitalization or subscript (e.g. `$H_2O$` mistyped as `$H_2O$` vs `$HO_2$`, `$Fe(OH)_3$` vs `$Fe(OH)_2$`).
 - Numbers substituted for letters ("0" for "O", "1" for "l").
 - Nonsensical word fragments, mismatched parentheses, incoherent sentences.
 
@@ -150,7 +153,7 @@ Return the answered JSON with the same `{ questions: [...] }` structure, where e
       "Вопрос 5: 0.60 → 0.95 (ответ подтверждён вычислением)"
     ],
     "garbled_text_detected": [
-      "Вопрос 1: «H2S04», возможно, «H₂SO₄»"
+      "Вопрос 1: «$H_2S0_4$», возможно, «$H_2SO_4$»"
     ],
     "unsolved": [
       "Вопрос 4: текст вопроса слишком искажён, чтобы решить"
@@ -195,9 +198,9 @@ When given multiple files or a directory:
     {
       "number": 1,
       "question": "Укажите, какие из данных формул соответствуют кислотам:",
-      "choices": ["Fe(OH)₂", "Cs₂O", "HBr", "Na₂CO₃", "H₂SO₄"],
+      "choices": ["$\\mathrm{Fe(OH)_2}$", "$\\mathrm{Cs_2O}$", "$\\mathrm{HBr}$", "$\\mathrm{Na_2CO_3}$", "$H_2SO_4$"],
       "answers": [
-        {"id": "C", "value": "HBr"}
+        {"id": "C", "value": "$\\mathrm{HBr}$"}
       ],
       "tags": ["химия"],
       "confidence": 0.98,
@@ -209,7 +212,7 @@ When given multiple files or a directory:
 
 **Answerer analysis:**
 - Structural check: PASS.
-- Solve: Acids are substances that donate H⁺. Among the choices: Fe(OH)₂ is a base (hydroxide), Cs₂O is a basic oxide, **HBr is an acid** (hydrobromic acid), Na₂CO₃ is a salt, **H₂SO₄ is an acid** (sulfuric acid). So the correct answers are HBr (C) and H₂SO₄ (E).
+- Solve: Acids are substances that donate H⁺. Among the choices: $\mathrm{Fe(OH)_2}$ is a base (hydroxide), $\mathrm{Cs_2O}$ is a basic oxide, **$\mathrm{HBr}$ is an acid** (hydrobromic acid), $\mathrm{Na_2CO_3}$ is a salt, **$H_2SO_4$ is an acid** (sulfuric acid). So the correct answers are HBr (C) and H₂SO₄ (E).
 - The input only had HBr marked. The marking was partial/incorrect — the answerer adds H₂SO₄.
 - Confidence: 0.97 (straightforward chemistry).
 
@@ -228,14 +231,14 @@ When given multiple files or a directory:
     {
       "number": 1,
       "question": "Укажите, какие из данных формул соответствуют кислотам:",
-      "choices": ["Fe(OH)₂", "Cs₂O", "HBr", "Na₂CO₃", "H₂SO₄"],
+      "choices": ["$\\mathrm{Fe(OH)_2}$", "$\\mathrm{Cs_2O}$", "$\\mathrm{HBr}$", "$\\mathrm{Na_2CO_3}$", "$H_2SO_4$"],
       "answers": [
-        {"id": "C", "value": "HBr"},
-        {"id": "E", "value": "H₂SO₄"}
+        {"id": "C", "value": "$\\mathrm{HBr}$"},
+        {"id": "E", "value": "$H_2SO_4$"}
       ],
       "tags": ["химия"],
       "confidence": 0.97,
-      "explanation": "Кислоты отдает H⁺. HBr (бромоводородная кислота) и H₂SO₄ (серная кислота) — кислоты; Fe(OH)₂ — основание, Cs₂O — основной оксид, Na₂CO₃ — соль. В исходных данных отмечен только HBr; добавлен H₂SO₄."
+      "explanation": "Кислоты отдают H⁺. HBr (бромоводородная кислота) и H₂SO₄ (серная кислота) — кислоты; Fe(OH)₂ — основание, Cs₂O — основной оксид, Na₂CO₃ — соль. В исходных данных отмечен только HBr; добавлен H₂SO₄."
     }
   ]
 }
@@ -264,6 +267,7 @@ When given multiple files or a directory:
 - **Missing the `_verification` summary.** This is how the human reviewer quickly finds overrides and unsolved questions. Always include it.
 - **Not checking multi-answer completeness.** When the question allows several answers, make sure every correct choice is present and no incorrect one slipped in.
 - **Guessing when you cannot solve.** If you genuinely cannot determine the answer, leave `answers: []`, set confidence below 0.5, and record it in `unsolved`.
+- **Converting formulas back to Unicode.** The extractor's inline LaTeX (`$H_2SO_4$`) must survive into your output: `answers[].value` copied from `choices` keeps its exact LaTeX, and computed open-ended answers are written as inline LaTeX too — never `H₂SO₄` or `2 м/с²`.
 
 ## Red Flags
 
